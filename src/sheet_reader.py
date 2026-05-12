@@ -31,6 +31,8 @@ class LocalWorkbookSheetReader:
 
     def read_strategies(self) -> list[Strategy]:
         workbook_path = Path(self.config.local_workbook_path)
+        if str(workbook_path).strip() in {"", "."}:
+            raise SheetReadError("no Google Sheet is connected yet. Open the console and save a sheet URL first.")
         if not workbook_path.is_absolute():
             workbook_path = (self.base_dir / workbook_path).resolve()
         sheets = _read_xlsx_cells(workbook_path)
@@ -45,6 +47,8 @@ class LocalWorkbookSheetReader:
 
     def read_strategy(self, sheet_name: str) -> Strategy | None:
         workbook_path = Path(self.config.local_workbook_path)
+        if str(workbook_path).strip() in {"", "."}:
+            raise SheetReadError("no Google Sheet is connected yet. Open the console and save a sheet URL first.")
         if not workbook_path.is_absolute():
             workbook_path = (self.base_dir / workbook_path).resolve()
         sheets = _read_xlsx_cells(workbook_path)
@@ -121,7 +125,7 @@ def parse_strategy(sheet_name: str, cells: dict[str, Any]) -> Strategy | None:
 
 
 def _read_xlsx_cells(path: Path) -> dict[str, dict[str, Any]]:
-    if not path.exists():
+    if not path.exists() or not path.is_file():
         raise SheetReadError(f"workbook not found: {path}")
     with zipfile.ZipFile(path) as z:
         shared = _read_shared_strings(z)

@@ -41,6 +41,17 @@ DEFAULT_CONSOLE_SETTINGS = {
 }
 
 
+def app_base_dir() -> Path:
+    """Return the directory that should hold user config/data files."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[1]
+
+
+def is_frozen_app() -> bool:
+    return bool(getattr(sys, "frozen", False))
+
+
 def _console_encoding() -> str:
     return locale.getpreferredencoding(False) or "utf-8"
 
@@ -235,7 +246,12 @@ def save_service_account_key_to_config(
 
 
 def build_cli_command(config_path: str, action: str, sheet_name: str | None = None, side: str | None = None) -> list[str]:
-    command = [sys.executable, "-m", "src.main", "--config", config_path]
+    if is_frozen_app():
+        cli_exe = Path(sys.executable).with_name("KiwoomGlobalTraderCli.exe")
+        executable = cli_exe if cli_exe.exists() else Path(sys.executable)
+        command = [str(executable), "--cli", "--config", config_path]
+    else:
+        command = [sys.executable, "-m", "src.main", "--config", config_path]
     if action == "list":
         command.append("--list-strategies")
     elif action == "hts_check":
@@ -628,7 +644,7 @@ def _run_tk_app(config_path: str) -> int:
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
 
-    project_dir = Path(__file__).resolve().parents[1]
+    project_dir = app_base_dir()
 
     class TkConsole:
         def __init__(self) -> None:

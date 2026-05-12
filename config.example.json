@@ -6,12 +6,9 @@
     "exclude_sheets": ["정산", "README", "설명", "템플릿", "TEMPLATE"],
     "settlement_sheet_name": "정산",
     "refresh_interval_sec": 600,
-    "local_workbook_path": "../LINED/program.xlsx",
+    "local_workbook_path": "",
     "allow_insecure_ssl": true,
-    "public_csv_tabs": {
-      "LABU55": "https://docs.google.com/spreadsheets/d/YOUR_SPREADSHEET_ID/export?format=csv&gid=111111111",
-      "SOXL55": "https://docs.google.com/spreadsheets/d/YOUR_SPREADSHEET_ID/export?format=csv&gid=222222222"
-    }
+    "public_csv_tabs": {}
   },
   "trading": {
     "loop_interval_sec": 120,
@@ -25,7 +22,7 @@
     "partial_fill_cooldown_sec": 10,
     "post_order_confirm_wait_sec": 2,
     "post_cancel_confirm_wait_sec": 2,
-    "rebalance_enabled": false,
+    "rebalance_enabled": true,
     "rebalance_qty_tolerance": 0
   },
   "settlement": {

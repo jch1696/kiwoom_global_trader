@@ -11,6 +11,9 @@ from src.sheet_reader import LocalWorkbookSheetReader, PublicCsvSheetReader
 class SheetReaderTest(unittest.TestCase):
     def test_reads_existing_program_workbook(self) -> None:
         root = Path(__file__).resolve().parents[2]
+        workbook = root / "LINED" / "program.xlsx"
+        if not workbook.exists():
+            self.skipTest(f"local workbook fixture not found: {workbook}")
         reader = LocalWorkbookSheetReader(
             GoogleConfig(local_workbook_path="LINED/program.xlsx"),
             root,

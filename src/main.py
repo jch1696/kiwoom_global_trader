@@ -11,6 +11,7 @@ from .env_loader import load_env
 from .models import OpenOrder, OrderRequest, Side
 from .notifier import TelegramNotifier
 from .runtime_state import StateStore
+from .sheet_reader import SheetReadError
 
 
 def parse_args() -> argparse.Namespace:
@@ -101,7 +102,11 @@ def main() -> None:
             return
 
     if args.list_strategies:
-        strategies = _filter_strategies(scheduler.sheet_reader.read_strategies(), args.only_sheet)
+        try:
+            strategies = _filter_strategies(scheduler.sheet_reader.read_strategies(), args.only_sheet)
+        except SheetReadError as exc:
+            print(f"Cannot read strategy sheets: {exc}")
+            return
         if not strategies:
             print("No valid strategy sheets found. Check required cells: E6(account), E8(symbol), E10(investment), E12(total tiers).")
             return

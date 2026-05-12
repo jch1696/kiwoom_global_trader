@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from src.console import (
     SheetValidationState,
@@ -141,6 +142,14 @@ class ConsoleTest(unittest.TestCase):
                 "LABU55",
             ],
         )
+
+    def test_build_command_uses_packaged_exe_in_frozen_mode(self) -> None:
+        with patch("src.console.is_frozen_app", return_value=True), patch("pathlib.Path.exists", return_value=False):
+            command = build_cli_command("config.live.json", "dry_run", "LABU55")
+
+        self.assertEqual(command[:3], [sys.executable, "--cli", "--config"])
+        self.assertIn("--dry-run", command)
+        self.assertEqual(command[-2:], ["--only-sheet", "LABU55"])
 
     def test_build_fill_order_command(self) -> None:
         command = build_cli_command("config.live.json", "fill_order", "SOXL55")
