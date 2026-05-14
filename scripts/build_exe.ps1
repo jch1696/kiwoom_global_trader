@@ -3,6 +3,15 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $RepoRoot
 
+function Write-Utf8NoBom {
+    param(
+        [Parameter(Mandatory=$true)][string]$Path,
+        [Parameter(Mandatory=$true)][string]$Text
+    )
+    $encoding = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($Path, $Text, $encoding)
+}
+
 Write-Host "[build] installing runtime requirements"
 python -m pip install -r requirements.txt
 
@@ -38,7 +47,7 @@ UPDATE_REPO = "kiwoom_global_trader"
 UPDATE_RELEASE_TAG = "auto-latest"
 UPDATE_ZIP_ASSET = "KiwoomGlobalTraderConsole.zip"
 "@
-$GeneratedInfo | Set-Content -LiteralPath (Join-Path $RepoRoot "src\_generated_build_info.py") -Encoding UTF8
+Write-Utf8NoBom -Path (Join-Path $RepoRoot "src\_generated_build_info.py") -Text $GeneratedInfo
 
 Write-Host "[build] building executable"
 python -m PyInstaller packaging\KiwoomGlobalTraderConsole.spec --noconfirm --clean
@@ -67,7 +76,7 @@ $Manifest = @{
     title = "Kiwoom Global Trader auto update"
     created_at = (Get-Date).ToString("s")
 }
-$Manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $RepoRoot "dist\update.json") -Encoding UTF8
+Write-Utf8NoBom -Path (Join-Path $RepoRoot "dist\update.json") -Text ($Manifest | ConvertTo-Json -Depth 4)
 
 Write-Host "[build] done"
 Write-Host "EXE: $ExePath"
