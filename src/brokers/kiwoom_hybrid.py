@@ -484,6 +484,9 @@ class KiwoomHybridBroker(BrokerAdapter):
                     updated = self._normalize_account_no(self._clean_text_cell(self._safe_window_text(combo)))
                     if updated == target:
                         return True
+                self._dismiss_account_dropdown(combo)
+                if self._select_account_by_keyboard_cycle(window, combo, target):
+                    return True
             else:
                 print("  [account] open dropdown list not found", flush=True)
 
@@ -500,6 +503,38 @@ class KiwoomHybridBroker(BrokerAdapter):
             keyboard.send_keys("{ESC}")
         except Exception:
             pass
+
+    def _select_account_by_keyboard_cycle(self, window: Any, combo: Any, target: str, max_steps: int = 10) -> bool:
+        try:
+            from pywinauto import keyboard
+
+            try:
+                window.set_focus()
+            except Exception:
+                pass
+            rect = combo.rectangle()
+            seen: set[str] = set()
+            for _step in range(max_steps):
+                current = self._normalize_account_no(self._clean_text_cell(self._safe_window_text(combo)))
+                if current == target:
+                    return True
+                if current:
+                    seen.add(current)
+                self._mouse_click_screen((rect.left + 18, (rect.top + rect.bottom) // 2))
+                time.sleep(0.1)
+                keyboard.send_keys("{DOWN}{ENTER}", pause=0.03)
+                time.sleep(0.45)
+                updated = self._normalize_account_no(self._clean_text_cell(self._safe_window_text(combo)))
+                if updated == target:
+                    print(f"  [account] keyboard cycle selected target={target}", flush=True)
+                    return True
+                if updated and updated in seen and len(seen) > 1:
+                    break
+            print(f"  [account] keyboard cycle failed target={target}", flush=True)
+            return False
+        except Exception as exc:
+            print(f"  [account] keyboard cycle failed: {exc}", flush=True)
+            return False
 
     def _find_open_combo_list(self, combo: Any | None = None) -> int | None:
         combo_rect = None
