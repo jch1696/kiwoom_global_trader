@@ -815,6 +815,7 @@ def _run_tk_app(config_path: str) -> int:
             self.hts_launch_done_date: str | None = None
             self.hts_login_done_date: str | None = None
             self.hts_login_after_launch_job: str | None = None
+            self.hts_pending_launch_job: str | None = None
             self.hts_auto_ready_at: datetime | None = None
             self.saved_auto_enabled_sheets: set[str] | None = None
             self.auto_start_pending = False
@@ -1230,6 +1231,7 @@ def _run_tk_app(config_path: str) -> int:
         def launch_hts_now(self) -> None:
             self.save_console_settings()
             self.hts_connected_at = None
+            self.hts_pending_launch_job = None
             try:
                 launch_hts_process(self.hts_exe_path_var.get().strip())
             except Exception as exc:
@@ -1318,6 +1320,24 @@ def _run_tk_app(config_path: str) -> int:
             self.stop_auto_button.configure(state=tk.DISABLED)
             self.append_log(f"[console] 자동 운영 대기: HTS 로그인/연결 확인 필요 ({source})")
             self.status_var.set("자동 운영 대기 / HTS 로그인 대기")
+            self.schedule_hts_launch_for_pending_auto_start()
+
+        def schedule_hts_launch_for_pending_auto_start(self) -> None:
+            if not self.hts_auto_enabled_var.get() or self.hts_connected_at is not None:
+                return
+            if self.hts_login_after_launch_job is not None or self.hts_pending_launch_job is not None:
+                return
+            self.hts_pending_launch_job = self.root.after(1000, self.launch_hts_for_pending_auto_start)
+
+        def launch_hts_for_pending_auto_start(self) -> None:
+            self.hts_pending_launch_job = None
+            if not self.auto_start_pending or not self.hts_auto_enabled_var.get() or self.hts_connected_at is not None:
+                return
+            if self.running:
+                self.hts_pending_launch_job = self.root.after(1000, self.launch_hts_for_pending_auto_start)
+                return
+            self.append_log("[console] HTS 자동 실행: 자동운영 대기 상태라 즉시 실행합니다")
+            self.launch_hts_now()
 
         def refresh_live_button(self) -> None:
             if not hasattr(self, "live_button"):
