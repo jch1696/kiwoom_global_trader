@@ -621,8 +621,11 @@ def launch_hts_process(exe_path: str) -> subprocess.Popen:
 
 
 def login_simple_certificate(pin: str, timeout_sec: int = 20) -> str:
+    pin = "".join(ch for ch in str(pin) if ch.isdigit())
     if not pin:
         raise ValueError("간편인증 PIN이 비어 있습니다")
+    if len(pin) != 6:
+        raise ValueError("간편인증 PIN은 숫자 6자리여야 합니다")
     from pywinauto import Desktop, keyboard, mouse
 
     deadline = datetime.now() + timedelta(seconds=timeout_sec)
@@ -636,6 +639,7 @@ def login_simple_certificate(pin: str, timeout_sec: int = 20) -> str:
             if "간편인증" in title or "인증서 선택" in title:
                 candidates.append(window)
         if not candidates:
+            time_module.sleep(0.2)
             continue
         window = candidates[0]
         try:
@@ -1225,6 +1229,7 @@ def _run_tk_app(config_path: str) -> int:
 
         def launch_hts_now(self) -> None:
             self.save_console_settings()
+            self.hts_connected_at = None
             try:
                 launch_hts_process(self.hts_exe_path_var.get().strip())
             except Exception as exc:
@@ -1298,6 +1303,22 @@ def _run_tk_app(config_path: str) -> int:
             state = self.sheet_states.get(sheet_name or "")
             return live_unlock_status(self.today_open_var.get(), self.hts_connected_at, state)
 
+        def hts_ready_for_auto_scheduler(self) -> bool:
+            return (not self.hts_auto_enabled_var.get()) or self.hts_connected_at is not None
+
+        def defer_scheduler_until_hts_ready(self, source: str) -> None:
+            self.auto_start_pending = True
+            self.scheduler_active = False
+            self.schedule_batch = []
+            self.next_batch_at = None
+            for sheet_name, state in self.schedule_states.items():
+                state.next_run_at = None
+                self.update_sheet_next_run(sheet_name)
+            self.start_auto_button.configure(state=tk.NORMAL)
+            self.stop_auto_button.configure(state=tk.DISABLED)
+            self.append_log(f"[console] 자동 운영 대기: HTS 로그인/연결 확인 필요 ({source})")
+            self.status_var.set("자동 운영 대기 / HTS 로그인 대기")
+
         def refresh_live_button(self) -> None:
             if not hasattr(self, "live_button"):
                 return
@@ -1341,6 +1362,9 @@ def _run_tk_app(config_path: str) -> int:
                 self.console_settings_path,
                 self.current_console_settings(),
             )
+            if not self.hts_ready_for_auto_scheduler():
+                self.defer_scheduler_until_hts_ready("시작 요청")
+                return
             now = datetime.now()
             self.scheduler_active = True
             in_window = is_time_in_window(now.time(), start, end)
@@ -1378,10 +1402,8 @@ def _run_tk_app(config_path: str) -> int:
         def start_scheduler_from_autostart(self) -> None:
             if self.scheduler_active:
                 return
-            if self.hts_auto_enabled_var.get() and self.hts_connected_at is None:
-                self.auto_start_pending = True
-                self.append_log("[console] 콘솔 시작 예약: HTS 로그인/연결 확인 후 자동 운영을 시작합니다")
-                self.status_var.set("자동 운영 대기 / HTS 로그인 대기")
+            if not self.hts_ready_for_auto_scheduler():
+                self.defer_scheduler_until_hts_ready("콘솔 시작 예약")
                 return
             self.append_log("[console] 콘솔 시작 설정에 따라 자동 운영 예약을 활성화합니다")
             self.start_scheduler()
@@ -1415,6 +1437,10 @@ def _run_tk_app(config_path: str) -> int:
                 self.append_log(f"[console] HTS 자동 실행 오류: {exc}")
                 self.send_console_telegram(f"[HTS 자동 실행 오류]\n{exc}", failure=True)
             if not self.scheduler_active or self.running or self.auto_fill_waiting:
+                return
+            if not self.hts_ready_for_auto_scheduler():
+                self.status_var.set("자동 운영 대기 / HTS 연결 확인 대기")
+                self.auto_start_pending = True
                 return
             try:
                 start = parse_hhmm(self.schedule_start_var.get())
@@ -1531,10 +1557,10 @@ def _run_tk_app(config_path: str) -> int:
             self.set_running(False, action, sheet_name)
             if action == "hts_check":
                 self.hts_connected_at = datetime.now() if ok else None
-                if ok and self.auto_start_pending and self.auto_start_var.get() and not self.scheduler_active:
+                if ok and self.auto_start_pending and not self.scheduler_active:
                     self.auto_start_pending = False
                     self.append_log("[console] HTS 연결 확인 완료: 대기 중이던 자동 운영을 시작합니다")
-                    self.root.after(500, self.start_scheduler_from_autostart)
+                    self.root.after(500, self.start_scheduler)
                 elif not ok and self.auto_start_pending:
                     self.status_var.set("자동 운영 대기 / HTS 연결 확인 실패")
             if ok and action in {"dry_run", "fill_order", "live_order"}:
