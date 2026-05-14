@@ -813,6 +813,7 @@ def _run_tk_app(config_path: str) -> int:
             self.hts_login_after_launch_job: str | None = None
             self.hts_auto_ready_at: datetime | None = None
             self.saved_auto_enabled_sheets: set[str] | None = None
+            self.auto_start_pending = False
             self.notify_config = NotifyConfig()
             self.notifier = TelegramNotifier(self.notify_config)
 
@@ -1254,15 +1255,23 @@ def _run_tk_app(config_path: str) -> int:
 
         def login_hts_now(self) -> None:
             self.save_console_settings()
-            self.hts_login_done_date = datetime.now().strftime("%Y-%m-%d")
             try:
                 message = login_simple_certificate(self.hts_simple_pin_var.get().strip())
             except Exception as exc:
                 self.append_log(f"[console] 간편인증 실패: {exc}")
                 self.send_console_telegram(f"[HTS 간편인증 실패]\n{exc}", failure=True)
                 return
+            self.hts_login_done_date = datetime.now().strftime("%Y-%m-%d")
             self.append_log(f"[console] {message}")
             self.send_console_telegram(f"[HTS 간편인증 완료]\n{message}")
+            self.root.after(12000, self.check_hts_after_login)
+
+        def check_hts_after_login(self) -> None:
+            if self.running:
+                self.root.after(1000, self.check_hts_after_login)
+                return
+            self.append_log("[console] 간편인증 후 HTS 연결 확인을 실행합니다")
+            self.run_action("hts_check")
 
         def toggle_today_open(self) -> None:
             self.append_log(f"[console] 오늘 장 운영 {'ON' if self.today_open_var.get() else 'OFF'}")
@@ -1368,6 +1377,11 @@ def _run_tk_app(config_path: str) -> int:
 
         def start_scheduler_from_autostart(self) -> None:
             if self.scheduler_active:
+                return
+            if self.hts_auto_enabled_var.get() and self.hts_connected_at is None:
+                self.auto_start_pending = True
+                self.append_log("[console] 콘솔 시작 예약: HTS 로그인/연결 확인 후 자동 운영을 시작합니다")
+                self.status_var.set("자동 운영 대기 / HTS 로그인 대기")
                 return
             self.append_log("[console] 콘솔 시작 설정에 따라 자동 운영 예약을 활성화합니다")
             self.start_scheduler()
@@ -1517,6 +1531,12 @@ def _run_tk_app(config_path: str) -> int:
             self.set_running(False, action, sheet_name)
             if action == "hts_check":
                 self.hts_connected_at = datetime.now() if ok else None
+                if ok and self.auto_start_pending and self.auto_start_var.get() and not self.scheduler_active:
+                    self.auto_start_pending = False
+                    self.append_log("[console] HTS 연결 확인 완료: 대기 중이던 자동 운영을 시작합니다")
+                    self.root.after(500, self.start_scheduler_from_autostart)
+                elif not ok and self.auto_start_pending:
+                    self.status_var.set("자동 운영 대기 / HTS 연결 확인 실패")
             if ok and action in {"dry_run", "fill_order", "live_order"}:
                 self.hts_connected_at = datetime.now()
             if sheet_name is not None and not self.seen_strategy_result:
