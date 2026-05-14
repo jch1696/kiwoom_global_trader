@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import io
 import re
 import zipfile
 import csv
@@ -89,6 +90,33 @@ class PublicCsvSheetReader:
         return parse_strategy(sheet_name, cells)
 
 
+class PublicXlsxSheetReader:
+    """Reads all strategy tabs from a link-accessible Google Sheet xlsx export."""
+
+    def __init__(self, config: GoogleConfig) -> None:
+        self.config = config
+
+    def read_strategies(self) -> list[Strategy]:
+        sheets = _read_xlsx_url_cells(self.config.public_xlsx_url, self.config.allow_insecure_ssl)
+        strategies: list[Strategy] = []
+        for sheet_name, cells in sheets.items():
+            if sheet_name in set(self.config.exclude_sheets):
+                continue
+            strategy = parse_strategy(sheet_name, cells)
+            if strategy is not None:
+                strategies.append(strategy)
+        return strategies
+
+    def read_strategy(self, sheet_name: str) -> Strategy | None:
+        if sheet_name in set(self.config.exclude_sheets):
+            return None
+        sheets = _read_xlsx_url_cells(self.config.public_xlsx_url, self.config.allow_insecure_ssl)
+        cells = sheets.get(sheet_name)
+        if cells is None:
+            return None
+        return parse_strategy(sheet_name, cells)
+
+
 def parse_strategy(sheet_name: str, cells: dict[str, Any]) -> Strategy | None:
     required = ["E6", "E8", "E10", "E12"]
     missing = [cell for cell in required if _blank(cells.get(cell))]
@@ -128,18 +156,28 @@ def _read_xlsx_cells(path: Path) -> dict[str, dict[str, Any]]:
     if not path.exists() or not path.is_file():
         raise SheetReadError(f"workbook not found: {path}")
     with zipfile.ZipFile(path) as z:
-        shared = _read_shared_strings(z)
-        workbook = ET.fromstring(z.read("xl/workbook.xml"))
-        rels = ET.fromstring(z.read("xl/_rels/workbook.xml.rels"))
-        relmap = {rel.attrib["Id"]: rel.attrib["Target"] for rel in rels}
-        result: dict[str, dict[str, Any]] = {}
-        for sheet in workbook.find("a:sheets", NS):
-            title = sheet.attrib["name"]
-            rid = sheet.attrib["{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"]
-            target = "xl/" + relmap[rid].lstrip("/")
-            root = ET.fromstring(z.read(target))
-            result[title] = _sheet_cells(root, shared)
-        return result
+        return _read_xlsx_zip_cells(z)
+
+
+def _read_xlsx_url_cells(url: str, allow_insecure_ssl: bool = False) -> dict[str, dict[str, Any]]:
+    content = _read_url_bytes(url, allow_insecure_ssl)
+    with zipfile.ZipFile(io.BytesIO(content)) as z:
+        return _read_xlsx_zip_cells(z)
+
+
+def _read_xlsx_zip_cells(z: zipfile.ZipFile) -> dict[str, dict[str, Any]]:
+    shared = _read_shared_strings(z)
+    workbook = ET.fromstring(z.read("xl/workbook.xml"))
+    rels = ET.fromstring(z.read("xl/_rels/workbook.xml.rels"))
+    relmap = {rel.attrib["Id"]: rel.attrib["Target"] for rel in rels}
+    result: dict[str, dict[str, Any]] = {}
+    for sheet in workbook.find("a:sheets", NS):
+        title = sheet.attrib["name"]
+        rid = sheet.attrib["{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"]
+        target = "xl/" + relmap[rid].lstrip("/")
+        root = ET.fromstring(z.read(target))
+        result[title] = _sheet_cells(root, shared)
+    return result
 
 
 def _read_csv_url_cells(url: str, allow_insecure_ssl: bool = False) -> dict[str, Any]:
@@ -182,25 +220,29 @@ def _build_opener(allow_insecure_ssl: bool) -> urllib.request.OpenerDirector:
 
 
 def _read_url_text(url: str, allow_insecure_ssl: bool) -> str:
+    return _read_url_bytes(url, allow_insecure_ssl).decode("utf-8-sig")
+
+
+def _read_url_bytes(url: str, allow_insecure_ssl: bool) -> bytes:
     # urlopen(timeout=N) is a *socket-level* timeout, not a total-request timeout.
     # Wrap in a thread so we can enforce a hard wall-clock limit.
     TOTAL_TIMEOUT = 20
 
     print(f"  [sheet] fetching {url[:60]}...", flush=True)
 
-    def _fetch() -> str:
+    def _fetch() -> bytes:
         opener = _build_opener(allow_insecure_ssl)
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         try:
             with opener.open(req, timeout=10) as response:
-                return response.read().decode("utf-8-sig")
+                return response.read()
         except urllib.error.URLError as exc:
             if not allow_insecure_ssl or "CERTIFICATE_VERIFY_FAILED" not in str(exc):
                 raise
             # already using unverified context via _build_opener; try plain urllib as fallback
             context = ssl._create_unverified_context()
             with urllib.request.urlopen(url, timeout=10, context=context) as response:
-                return response.read().decode("utf-8-sig")
+                return response.read()
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(_fetch)

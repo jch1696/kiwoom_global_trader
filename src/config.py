@@ -16,6 +16,7 @@ class GoogleConfig:
     refresh_interval_sec: int = 600
     local_workbook_path: str = "../LINED/program.xlsx"
     public_csv_tabs: dict[str, str] = field(default_factory=dict)
+    public_xlsx_url: str = ""
     allow_insecure_ssl: bool = False
 
 

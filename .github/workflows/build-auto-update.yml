@@ -1,0 +1,49 @@
+name: Build auto-update release
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build executable
+        shell: powershell
+        run: |
+          $env:APP_VERSION = "auto-${{ github.run_number }}"
+          .\scripts\build_exe.ps1
+
+      - name: Publish auto-update release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: auto-latest
+          commit: ${{ github.sha }}
+          name: 자동 업데이트 최신 빌드
+          body: |
+            콘솔 시작 시 자동 업데이트에 사용되는 최신 빌드입니다.
+
+            Commit: ${{ github.sha }}
+          artifacts: "dist/KiwoomGlobalTraderConsole.zip,dist/update.json"
+          allowUpdates: true
+          replacesArtifacts: true
+          removeArtifacts: true
+          artifactErrorsFailBuild: true
+          makeLatest: true

@@ -13,7 +13,7 @@ from .notifier import NullNotifier, TelegramNotifier
 from .order_manager import OrderManager
 from .runtime_state import StateStore
 from .scheduler import Scheduler
-from .sheet_reader import LocalWorkbookSheetReader, PublicCsvSheetReader
+from .sheet_reader import LocalWorkbookSheetReader, PublicCsvSheetReader, PublicXlsxSheetReader
 from .settlement_writer import SettlementWriter
 from .tier_engine import TierEngine
 
@@ -41,7 +41,12 @@ def build_scheduler(
     )
     tier_engine = TierEngine(config.trading)
     order_manager = OrderManager(broker, tier_engine, config.trading, config.notify, logger, notifier)
-    sheet_reader = PublicCsvSheetReader(config.google) if config.google.public_csv_tabs else LocalWorkbookSheetReader(config.google, base_dir)
+    if config.google.public_csv_tabs:
+        sheet_reader = PublicCsvSheetReader(config.google)
+    elif config.google.public_xlsx_url:
+        sheet_reader = PublicXlsxSheetReader(config.google)
+    else:
+        sheet_reader = LocalWorkbookSheetReader(config.google, base_dir)
     state_store = StateStore(base_dir / config.settlement.state_file)
     scheduler = Scheduler(config, state_store, sheet_reader, order_manager, logger)
     scheduler.base_dir = base_dir

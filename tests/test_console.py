@@ -27,11 +27,13 @@ from src.console import (
     parse_live_order_result_line,
     parse_hhmm,
     parse_google_sheet_tabs_from_html,
+    parse_google_sheet_tab_names_from_html,
     parse_strategy_result_line,
     read_console_settings,
     remaining_time_text,
     resolve_credential_path,
     save_public_csv_tabs_to_config,
+    save_public_xlsx_to_config,
     save_service_account_key_to_config,
     service_account_email_from_file,
     should_run_daily_time,
@@ -81,6 +83,15 @@ class ConsoleTest(unittest.TestCase):
         self.assertEqual(tabs["LABU55"], build_public_csv_url("spreadsheet-id", "2140122702"))
         self.assertEqual(tabs["SOXL55"], build_public_csv_url("spreadsheet-id", "864771651"))
 
+    def test_parse_google_sheet_tab_names_from_public_html(self) -> None:
+        html = """
+        <div class="docs-sheet-tab-caption">TQQQ50</div>
+        <div class="goog-inline-block docs-sheet-tab-caption">BITU55</div>
+        <div class="docs-sheet-tab-caption">Template_reselt</div>
+        """
+
+        self.assertEqual(parse_google_sheet_tab_names_from_html(html), ["TQQQ50", "BITU55", "Template_reselt"])
+
     def test_save_public_csv_tabs_to_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.json"
@@ -96,6 +107,25 @@ class ConsoleTest(unittest.TestCase):
         self.assertEqual(data["google"]["spreadsheet_id"], "test-sheet-id")
         self.assertEqual(data["google"]["public_csv_tabs"]["LABU55"], "https://example.test/labu.csv")
         self.assertTrue(data["trading"]["dry_run"])
+
+    def test_save_public_xlsx_to_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            path.write_text(
+                json.dumps({"google": {"public_csv_tabs": {"OLD": "https://example.test/old.csv"}}}),
+                encoding="utf-8",
+            )
+
+            save_public_xlsx_to_config(
+                path,
+                "https://docs.google.com/spreadsheets/d/test-sheet-id/edit",
+                "https://docs.google.com/spreadsheets/d/test-sheet-id/export?format=xlsx",
+            )
+            data = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertEqual(data["google"]["spreadsheet_id"], "test-sheet-id")
+        self.assertEqual(data["google"]["public_csv_tabs"], {})
+        self.assertEqual(data["google"]["public_xlsx_url"], "https://docs.google.com/spreadsheets/d/test-sheet-id/export?format=xlsx")
 
     def test_service_account_email_from_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

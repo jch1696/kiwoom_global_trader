@@ -23,3 +23,4 @@ __pycache__/
 .pytest_cache/
 build/
 dist/
+src/_generated_build_info.py

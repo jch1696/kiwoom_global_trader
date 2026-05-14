@@ -2,6 +2,7 @@
 
 import argparse
 import csv
+import html as html_module
 import json
 import locale
 import re
@@ -13,10 +14,11 @@ from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from pathlib import Path
 
-from .config import NotifyConfig, load_config
+from .config import GoogleConfig, NotifyConfig, load_config
 from .env_loader import load_env
 from .notifier import TelegramNotifier
-from .sheet_reader import _read_url_text
+from .sheet_reader import PublicXlsxSheetReader, _read_url_text
+from .updater import maybe_auto_update
 
 
 MAX_LOG_LINES = 500
@@ -131,7 +133,18 @@ def load_sheet_tabs(config_path: str | Path) -> list[ConsoleSheet]:
     tabs = data.get("google", {}).get("public_csv_tabs", {})
     if not isinstance(tabs, dict):
         return []
-    return [ConsoleSheet(name=str(name), source=str(url)) for name, url in tabs.items()]
+    if tabs:
+        return [ConsoleSheet(name=str(name), source=str(url)) for name, url in tabs.items()]
+    google = data.get("google", {})
+    public_xlsx_url = str(google.get("public_xlsx_url", "")).strip()
+    if public_xlsx_url:
+        try:
+            config = load_config(path)
+            strategies = PublicXlsxSheetReader(config.google).read_strategies()
+        except Exception:
+            return []
+        return [ConsoleSheet(name=str(strategy.sheet_name), source=public_xlsx_url) for strategy in strategies]
+    return []
 
 
 def extract_spreadsheet_id(value: str) -> str:
@@ -149,6 +162,10 @@ def extract_spreadsheet_id(value: str) -> str:
 
 def build_public_csv_url(spreadsheet_id: str, gid: str) -> str:
     return f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/export?format=csv&gid={gid}"
+
+
+def build_public_xlsx_url(spreadsheet_id: str) -> str:
+    return f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/export?format=xlsx"
 
 
 def parse_google_sheet_tabs_from_html(spreadsheet_id: str, html: str) -> dict[str, str]:
@@ -183,6 +200,17 @@ def parse_google_sheet_tabs_from_html(spreadsheet_id: str, html: str) -> dict[st
     return result
 
 
+def parse_google_sheet_tab_names_from_html(html: str) -> list[str]:
+    names: list[str] = []
+    pattern = r'<div[^>]*class="[^"]*docs-sheet-tab-caption[^"]*"[^>]*>(.*?)</div>'
+    for match in re.finditer(pattern, html, flags=re.DOTALL):
+        name = re.sub(r"<[^>]+>", "", match.group(1)).strip()
+        name = html_module.unescape(name)
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
 def discover_public_csv_tabs(sheet_url: str, allow_insecure_ssl: bool = False) -> dict[str, str]:
     spreadsheet_id = extract_spreadsheet_id(sheet_url)
     html = _read_url_text(f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/edit", allow_insecure_ssl)
@@ -190,6 +218,29 @@ def discover_public_csv_tabs(sheet_url: str, allow_insecure_ssl: bool = False) -
     if not tabs:
         raise ValueError("시트 탭을 찾지 못했습니다. 시트 공유 설정이 '링크가 있는 사용자 보기 가능'인지 확인하세요.")
     return tabs
+
+
+def discover_public_sheet_source(sheet_url: str, allow_insecure_ssl: bool = False) -> tuple[str, dict[str, str], str]:
+    spreadsheet_id = extract_spreadsheet_id(sheet_url)
+    html = _read_url_text(f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/edit", allow_insecure_ssl)
+    tabs = parse_google_sheet_tabs_from_html(spreadsheet_id, html)
+    if tabs:
+        return "csv", tabs, ""
+    tab_names = parse_google_sheet_tab_names_from_html(html)
+    xlsx_url = build_public_xlsx_url(spreadsheet_id)
+    strategies = PublicXlsxSheetReader(google_source_config(xlsx_url, allow_insecure_ssl)).read_strategies()
+    valid_names = [strategy.sheet_name for strategy in strategies]
+    if not valid_names:
+        visible = ", ".join(tab_names) if tab_names else "없음"
+        raise ValueError(
+            "주문시트 탭을 읽었지만 유효한 주문시트를 찾지 못했습니다. "
+            f"보이는 탭: {visible}. 템플릿 셀(E6/E8/E10/E12)과 프로그램 영역을 확인하세요."
+        )
+    return "xlsx", {}, xlsx_url
+
+
+def google_source_config(public_xlsx_url: str, allow_insecure_ssl: bool) -> GoogleConfig:
+    return GoogleConfig(public_xlsx_url=public_xlsx_url, public_csv_tabs={}, allow_insecure_ssl=allow_insecure_ssl)
 
 
 def save_public_csv_tabs_to_config(config_path: str | Path, sheet_url: str, tabs: dict[str, str]) -> Path:
@@ -200,6 +251,20 @@ def save_public_csv_tabs_to_config(config_path: str | Path, sheet_url: str, tabs
     google = data.setdefault("google", {})
     google["spreadsheet_id"] = extract_spreadsheet_id(sheet_url)
     google["public_csv_tabs"] = tabs
+    google["public_xlsx_url"] = ""
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def save_public_xlsx_to_config(config_path: str | Path, sheet_url: str, public_xlsx_url: str) -> Path:
+    path = Path(config_path)
+    if not path.exists():
+        raise FileNotFoundError(f"설정 파일을 찾지 못했습니다: {path}")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    google = data.setdefault("google", {})
+    google["spreadsheet_id"] = extract_spreadsheet_id(sheet_url)
+    google["public_csv_tabs"] = {}
+    google["public_xlsx_url"] = public_xlsx_url
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return path
 
@@ -645,6 +710,9 @@ def _run_tk_app(config_path: str) -> int:
     from tkinter import filedialog, messagebox, ttk
 
     project_dir = app_base_dir()
+    updated, update_message = maybe_auto_update(project_dir)
+    if updated:
+        return 0
 
     class TkConsole:
         def __init__(self) -> None:
@@ -694,6 +762,8 @@ def _run_tk_app(config_path: str) -> int:
             self.hts_simple_pin_var = tk.StringVar(value="")
 
             self._build()
+            if update_message:
+                self.append_log(f"[console] 업데이트 확인: {update_message}")
             self.reload_notifier()
             self.load_console_settings()
             self.reload_config()
@@ -905,14 +975,25 @@ def _run_tk_app(config_path: str) -> int:
             config_path = self.config_var.get().strip() or "config.live.json"
             try:
                 config = load_config(config_path)
-                tabs = discover_public_csv_tabs(sheet_url, allow_insecure_ssl=config.google.allow_insecure_ssl)
-                save_public_csv_tabs_to_config(config_path, sheet_url, tabs)
+                source_type, tabs, xlsx_url = discover_public_sheet_source(
+                    sheet_url,
+                    allow_insecure_ssl=config.google.allow_insecure_ssl,
+                )
+                if source_type == "csv":
+                    save_public_csv_tabs_to_config(config_path, sheet_url, tabs)
+                    detail = f"{len(tabs)}개 탭을 CSV 방식으로 설정에 저장했습니다."
+                    log_detail = f"mode=csv tabs={','.join(tabs.keys())}"
+                else:
+                    save_public_xlsx_to_config(config_path, sheet_url, xlsx_url)
+                    sheets = load_sheet_tabs(config_path)
+                    detail = f"{len(sheets)}개 주문시트를 XLSX 방식으로 설정에 저장했습니다."
+                    log_detail = f"mode=xlsx tabs={','.join(sheet.name for sheet in sheets)}"
             except Exception as exc:
                 self.append_log(f"[console] 시트 연결 실패: {exc}")
                 messagebox.showerror("시트 연결 오류", str(exc))
                 return
-            self.append_log(f"[console] 주문시트 연결 완료 tabs={','.join(tabs.keys())}")
-            messagebox.showinfo("시트 연결 완료", f"{len(tabs)}개 탭을 설정에 저장했습니다.")
+            self.append_log(f"[console] 주문시트 연결 완료 {log_detail}")
+            messagebox.showinfo("시트 연결 완료", detail)
             self.reload_config()
 
         def reload_config(self) -> None:
