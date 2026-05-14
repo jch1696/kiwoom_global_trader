@@ -41,6 +41,7 @@ def should_install_update(local_commit: str, manifest: UpdateManifest | None) ->
 
 
 def read_update_manifest_from_text(text: str) -> UpdateManifest:
+    text = text.lstrip("\ufeff")
     data = json.loads(text)
     return UpdateManifest(
         tag_name=str(data.get("tag_name", UPDATE_RELEASE_TAG)),
@@ -160,7 +161,7 @@ def _read_manifest_with_gh() -> UpdateManifest | None:
         manifest_path = temp_dir / "update.json"
         if result.returncode != 0 or not manifest_path.exists():
             return None
-        return read_update_manifest_from_text(manifest_path.read_text(encoding="utf-8"))
+        return read_update_manifest_from_text(manifest_path.read_text(encoding="utf-8-sig"))
 
 
 def _download_asset_with_gh(manifest: UpdateManifest, destination_dir: Path) -> bool:
@@ -229,7 +230,7 @@ def _request(url: str) -> urllib.request.Request:
 
 def _read_url_text(url: str) -> str:
     with urllib.request.urlopen(_request(url), timeout=30) as response:
-        return response.read().decode("utf-8")
+        return response.read().decode("utf-8-sig")
 
 
 def _download_url(url: str, destination: Path) -> None:

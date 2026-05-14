@@ -24,6 +24,12 @@ class UpdaterTest(unittest.TestCase):
         self.assertEqual(manifest.app_version, "auto-7")
         self.assertEqual(manifest.build_commit, "abc1234")
 
+    def test_reads_update_manifest_with_bom(self) -> None:
+        manifest = read_update_manifest_from_text('\ufeff{"tag_name":"auto-latest","build_commit":"abc1234"}')
+
+        self.assertEqual(manifest.tag_name, "auto-latest")
+        self.assertEqual(manifest.build_commit, "abc1234")
+
     def test_should_install_update_only_when_commit_differs(self) -> None:
         self.assertFalse(should_install_update("abc1234", UpdateManifest("auto-latest", "abc1234")))
         self.assertTrue(should_install_update("abc1234", UpdateManifest("auto-latest", "def5678")))

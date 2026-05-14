@@ -13,6 +13,7 @@ from src.console import (
     build_cli_command,
     build_public_csv_url,
     console_notification_text,
+    ensure_config_file,
     extract_spreadsheet_id,
     latest_order_summaries,
     line_indicates_failure,
@@ -45,6 +46,16 @@ from datetime import datetime, timedelta
 
 
 class ConsoleTest(unittest.TestCase):
+    def test_ensure_config_file_creates_missing_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.live.json"
+            created = ensure_config_file(path)
+            data = json.loads(created.read_text(encoding="utf-8"))
+
+        self.assertEqual(created, path)
+        self.assertIn("google", data)
+        self.assertIn("trading", data)
+
     def test_load_sheet_tabs_from_public_csv_tabs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.json"

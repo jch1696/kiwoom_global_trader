@@ -50,6 +50,85 @@ def app_base_dir() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def resolve_config_file(config_path: str | Path) -> Path:
+    path = Path(config_path)
+    if path.is_absolute():
+        return path
+    return app_base_dir() / path
+
+
+def ensure_config_file(config_path: str | Path) -> Path:
+    path = resolve_config_file(config_path)
+    if path.exists():
+        return path
+    example = app_base_dir() / "config.example.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if example.exists():
+        shutil.copy2(example, path)
+    else:
+        path.write_text(
+            json.dumps(
+                {
+                    "google": {
+                        "spreadsheet_id": "",
+                        "credential_file": "data/credentials.json",
+                        "order_sheet_mode": "all_tabs",
+                        "exclude_sheets": ["정산", "README", "설명", "템플릿", "TEMPLATE"],
+                        "settlement_sheet_name": "정산",
+                        "refresh_interval_sec": 600,
+                        "local_workbook_path": "",
+                        "allow_insecure_ssl": True,
+                        "public_csv_tabs": {},
+                        "public_xlsx_url": "",
+                    },
+                    "trading": {
+                        "loop_interval_sec": 120,
+                        "max_retry": 3,
+                        "strategy_timeout_sec": 90,
+                        "dry_run": True,
+                        "order_mode": "limit",
+                        "orders_per_side": 1,
+                        "price_tolerance": 0.01,
+                        "price_tolerance_sub_dollar": 0.0001,
+                        "partial_fill_cooldown_sec": 10,
+                        "post_order_confirm_wait_sec": 2,
+                        "post_cancel_confirm_wait_sec": 2,
+                        "rebalance_enabled": True,
+                        "rebalance_qty_tolerance": 0,
+                    },
+                    "settlement": {
+                        "enabled": True,
+                        "run_time_kst": "07:10",
+                        "session_mode": "regular_only",
+                        "once_per_day": True,
+                        "state_file": "data/state.json",
+                    },
+                    "broker": {
+                        "adapter": "kiwoom_hybrid",
+                        "account_check": True,
+                        "account_dropdown_order": [],
+                    },
+                    "notify": {
+                        "telegram_enabled": False,
+                        "telegram_token_env": "TELEGRAM_BOT_TOKEN",
+                        "telegram_chat_id_env": "TELEGRAM_CHAT_ID",
+                        "telegram_send_orders": True,
+                        "telegram_send_cancels": True,
+                        "telegram_send_failures": True,
+                        "telegram_send_keepalive": False,
+                        "telegram_force_ipv4": True,
+                        "telegram_allow_insecure_ssl": False,
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    return path
+
+
 def is_frozen_app() -> bool:
     return bool(getattr(sys, "frozen", False))
 
@@ -126,7 +205,7 @@ def live_unlock_status(
 
 
 def load_sheet_tabs(config_path: str | Path) -> list[ConsoleSheet]:
-    path = Path(config_path)
+    path = resolve_config_file(config_path)
     if not path.exists():
         return []
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -244,9 +323,7 @@ def google_source_config(public_xlsx_url: str, allow_insecure_ssl: bool) -> Goog
 
 
 def save_public_csv_tabs_to_config(config_path: str | Path, sheet_url: str, tabs: dict[str, str]) -> Path:
-    path = Path(config_path)
-    if not path.exists():
-        raise FileNotFoundError(f"설정 파일을 찾지 못했습니다: {path}")
+    path = ensure_config_file(config_path)
     data = json.loads(path.read_text(encoding="utf-8"))
     google = data.setdefault("google", {})
     google["spreadsheet_id"] = extract_spreadsheet_id(sheet_url)
@@ -257,9 +334,7 @@ def save_public_csv_tabs_to_config(config_path: str | Path, sheet_url: str, tabs
 
 
 def save_public_xlsx_to_config(config_path: str | Path, sheet_url: str, public_xlsx_url: str) -> Path:
-    path = Path(config_path)
-    if not path.exists():
-        raise FileNotFoundError(f"설정 파일을 찾지 못했습니다: {path}")
+    path = ensure_config_file(config_path)
     data = json.loads(path.read_text(encoding="utf-8"))
     google = data.setdefault("google", {})
     google["spreadsheet_id"] = extract_spreadsheet_id(sheet_url)
@@ -290,9 +365,7 @@ def save_service_account_key_to_config(
     key_path: str | Path,
     credential_file: str = "data/credentials.json",
 ) -> tuple[Path, str]:
-    config_file = Path(config_path)
-    if not config_file.exists():
-        raise FileNotFoundError(f"설정 파일을 찾지 못했습니다: {config_file}")
+    config_file = ensure_config_file(config_path)
     source = Path(key_path)
     if not source.exists():
         raise FileNotFoundError(f"서비스 계정 키 파일을 찾지 못했습니다: {source}")
@@ -974,7 +1047,8 @@ def _run_tk_app(config_path: str) -> int:
                 return
             config_path = self.config_var.get().strip() or "config.live.json"
             try:
-                config = load_config(config_path)
+                config_file = ensure_config_file(config_path)
+                config = load_config(config_file)
                 source_type, tabs, xlsx_url = discover_public_sheet_source(
                     sheet_url,
                     allow_insecure_ssl=config.google.allow_insecure_ssl,
@@ -1024,8 +1098,9 @@ def _run_tk_app(config_path: str) -> int:
         def refresh_credential_status(self) -> None:
             config_path = self.config_var.get().strip() or "config.live.json"
             try:
-                config = load_config(config_path)
-                credential_path = resolve_credential_path(config_path, config.google.credential_file)
+                config_file = resolve_config_file(config_path)
+                config = load_config(config_file)
+                credential_path = resolve_credential_path(config_file, config.google.credential_file)
                 if not credential_path.exists():
                     self.credential_status_var.set("정산 쓰기: 키 미등록")
                     return
@@ -1058,7 +1133,7 @@ def _run_tk_app(config_path: str) -> int:
         def reload_notifier(self) -> None:
             try:
                 load_env(project_dir / ".env")
-                config = load_config(self.config_var.get().strip() or "config.live.json")
+                config = load_config(resolve_config_file(self.config_var.get().strip() or "config.live.json"))
                 self.notify_config = config.notify
                 self.notifier = TelegramNotifier(config.notify)
                 self.telegram_var.set("텔레그램: 설정됨" if config.notify.telegram_enabled else "텔레그램: 비활성")
