@@ -1497,7 +1497,7 @@ def _run_tk_app(config_path: str) -> int:
             except ValueError:
                 self.append_log("[console] HTS 자동 실행 시간 설정 오류")
                 return
-            if should_run_daily_time(now, launch_time, self.hts_launch_done_date):
+            if should_run_daily_time(now, launch_time, self.hts_launch_done_date, max_late_sec=24 * 60 * 60 - 1):
                 self.launch_hts_now()
 
         def _worker(self, command: list[str], action: str, sheet_name: str | None) -> None:
