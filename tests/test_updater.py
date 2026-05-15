@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import unittest
+from pathlib import Path
 
-from src.updater import UpdateManifest, read_update_manifest_from_text, should_install_update
+from src.updater import UpdateManifest, _update_script, read_update_manifest_from_text, should_install_update
 
 
 class UpdaterTest(unittest.TestCase):
@@ -35,6 +36,20 @@ class UpdaterTest(unittest.TestCase):
         self.assertTrue(should_install_update("abc1234", UpdateManifest("auto-latest", "def5678")))
         self.assertFalse(should_install_update("abc1234", UpdateManifest("auto-latest", "")))
         self.assertFalse(should_install_update("abc1234", None))
+
+    def test_update_script_replaces_internal_runtime_safely(self) -> None:
+        script = _update_script(
+            pid=123,
+            zip_path=Path(r"C:\Temp\KiwoomGlobalTraderConsole.zip"),
+            app_dir=Path(r"C:\App"),
+            exe_path=Path(r"C:\App\KiwoomGlobalTraderConsole.exe"),
+        )
+
+        self.assertIn('Join-Path $appDir "_internal"', script)
+        self.assertIn("Remove-Item -LiteralPath $internalDir -Recurse -Force", script)
+        self.assertIn("_internal\\python*.dll", script)
+        self.assertIn("update.log", script)
+        self.assertIn("config.live.json", script)
 
 
 if __name__ == "__main__":

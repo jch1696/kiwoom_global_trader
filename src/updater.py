@@ -117,14 +117,62 @@ $pidToWait = {pid}
 $zipPath = "{_ps_escape(zip_path)}"
 $appDir = "{_ps_escape(app_dir)}"
 $exePath = "{_ps_escape(exe_path)}"
+$stageDir = Join-Path (Split-Path -Parent $zipPath) "stage"
+$logDir = Join-Path $appDir "logs"
+$logPath = Join-Path $logDir "update.log"
+
+function Write-UpdateLog($message) {{
+    try {{
+        if (-not (Test-Path -LiteralPath $logDir)) {{
+            New-Item -ItemType Directory -Path $logDir | Out-Null
+        }}
+        Add-Content -LiteralPath $logPath -Encoding UTF8 -Value ("$(Get-Date -Format s) " + $message)
+    }} catch {{}}
+}}
 
 try {{
+    Write-UpdateLog "waiting for pid $pidToWait"
     Wait-Process -Id $pidToWait -Timeout 60 -ErrorAction SilentlyContinue
 }} catch {{}}
 
-Start-Sleep -Seconds 1
-Expand-Archive -LiteralPath $zipPath -DestinationPath $appDir -Force
-Start-Process -FilePath $exePath -WorkingDirectory $appDir
+try {{
+    Start-Sleep -Seconds 1
+    Write-UpdateLog "extracting update zip"
+    if (Test-Path -LiteralPath $stageDir) {{
+        Remove-Item -LiteralPath $stageDir -Recurse -Force
+    }}
+    New-Item -ItemType Directory -Path $stageDir | Out-Null
+    Expand-Archive -LiteralPath $zipPath -DestinationPath $stageDir -Force
+
+    $internalDir = Join-Path $appDir "_internal"
+    if (Test-Path -LiteralPath $internalDir) {{
+        Write-UpdateLog "removing old _internal"
+        Remove-Item -LiteralPath $internalDir -Recurse -Force
+    }}
+
+    $preserveNames = @("data", "logs", "config.live.json", ".env", "credentials.json")
+    Get-ChildItem -LiteralPath $stageDir -Force | ForEach-Object {{
+        if ($preserveNames -contains $_.Name) {{
+            Write-UpdateLog ("preserve user file/folder " + $_.Name)
+        }} else {{
+            Copy-Item -LiteralPath $_.FullName -Destination $appDir -Recurse -Force
+        }}
+    }}
+
+    $runtimeDll = Get-ChildItem -Path (Join-Path $appDir "_internal\\python*.dll") -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -eq $runtimeDll) {{
+        throw "updated _internal folder is missing python runtime dll"
+    }}
+    if (-not (Test-Path -LiteralPath $exePath)) {{
+        throw "updated console exe is missing"
+    }}
+
+    Write-UpdateLog "update installed; restarting console"
+    Start-Process -FilePath $exePath -WorkingDirectory $appDir
+}} catch {{
+    Write-UpdateLog ("update failed: " + $_.Exception.Message)
+    throw
+}}
 """
 
 
