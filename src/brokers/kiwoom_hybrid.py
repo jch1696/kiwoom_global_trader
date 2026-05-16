@@ -1270,6 +1270,7 @@ class KiwoomHybridBroker(BrokerAdapter):
             int(rect.left + rect.width() * self.SEARCH_BOX_POINT[0]),
             int(rect.top + rect.height() * self.SEARCH_BOX_POINT[1]),
         )
+        search_control = self._find_main_search_edit(main_window)
 
         last_exc: Exception | None = None
         for _ in range(2):
@@ -1280,13 +1281,30 @@ class KiwoomHybridBroker(BrokerAdapter):
                     pass
                 keyboard.send_keys("{ESC}")
                 time.sleep(0.1)
-                try:
-                    mouse.click(button="left", coords=search_coords)
-                except Exception:
-                    if not self._click_screen_point(search_coords, main_window):
-                        raise RuntimeError(f"failed to click HTS search box at {search_coords}")
+                if search_control is not None:
+                    try:
+                        search_control.set_focus()
+                    except Exception:
+                        pass
+                    try:
+                        search_control.click_input()
+                    except Exception:
+                        center = self._control_center(search_control)
+                        if center is None:
+                            raise RuntimeError("failed to click detected HTS search edit")
+                        try:
+                            self._mouse_click_screen(center)
+                        except Exception as exc:
+                            if not self._click_screen_point(center):
+                                raise RuntimeError("failed to click detected HTS search edit") from exc
+                else:
+                    try:
+                        mouse.click(button="left", coords=search_coords)
+                    except Exception:
+                        if not self._click_screen_point(search_coords, main_window):
+                            raise RuntimeError(f"failed to click HTS search box at {search_coords}")
                 time.sleep(0.1)
-                keyboard.send_keys("{BACKSPACE 8}")
+                keyboard.send_keys("^a{BACKSPACE}")
                 time.sleep(0.05)
                 keyboard.send_keys(window_code, with_spaces=True)
                 time.sleep(1.8)
@@ -1301,6 +1319,42 @@ class KiwoomHybridBroker(BrokerAdapter):
             raise RuntimeError(f"failed while typing {window_code} into search box: {last_exc}") from last_exc
 
         raise RuntimeError(f"failed to open HTS window {window_code} via search box")
+
+    def _find_main_search_edit(self, main_window: Any) -> Any | None:
+        try:
+            main_rect = main_window.rectangle()
+            controls = main_window.descendants(class_name="Edit")
+        except Exception:
+            return None
+        candidates: list[tuple[int, int, Any]] = []
+        for control in controls:
+            if not self._is_control_visible(control):
+                continue
+            try:
+                rect = control.rectangle()
+            except Exception:
+                continue
+            width = int(rect.width())
+            height = int(rect.height())
+            if width < 20 or width > 120 or height < 8 or height > 30:
+                continue
+            if int(rect.top) > int(main_rect.top) + 90:
+                continue
+            if int(rect.left) < int(main_rect.left) or int(rect.left) > int(main_rect.left) + 180:
+                continue
+            candidates.append((int(rect.top), int(rect.left), control))
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: (item[0], item[1]))
+        return candidates[0][2]
+
+    @staticmethod
+    def _control_center(control: Any) -> tuple[int, int] | None:
+        try:
+            rect = control.rectangle()
+            return ((int(rect.left) + int(rect.right)) // 2, (int(rect.top) + int(rect.bottom)) // 2)
+        except Exception:
+            return None
 
     def _click_screen_point(self, coords: tuple[int, int], target_window: Any | None = None) -> bool:
         try:
