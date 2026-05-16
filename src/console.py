@@ -19,6 +19,7 @@ from .env_loader import load_env
 from .notifier import TelegramNotifier
 from .sheet_reader import PublicCsvSheetReader, PublicXlsxSheetReader, _read_url_text
 from .updater import maybe_auto_update
+from .build_info import APP_VERSION, BUILD_COMMIT
 
 
 MAX_LOG_LINES = 500
@@ -886,7 +887,7 @@ def _run_tk_app(config_path: str) -> int:
     class TkConsole:
         def __init__(self) -> None:
             self.root = tk.Tk()
-            self.root.title("키움글로벌 자동매매 콘솔")
+            self.root.title(f"키움글로벌 자동매매 콘솔 {APP_VERSION} ({BUILD_COMMIT})")
             self.root.geometry("1180x760")
             self.console_settings_path = project_dir / "data" / "console_settings.json"
             self.queue: queue.Queue[tuple[str, object]] = queue.Queue()
@@ -933,6 +934,7 @@ def _run_tk_app(config_path: str) -> int:
             self.hts_simple_pin_var = tk.StringVar(value="")
 
             self._build()
+            self.append_log(f"[console] 버전: {APP_VERSION} / {BUILD_COMMIT}")
             if update_message:
                 self.append_log(f"[console] 업데이트 확인: {update_message}")
             self.reload_notifier()

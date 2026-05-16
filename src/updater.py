@@ -320,13 +320,41 @@ def _request(url: str) -> urllib.request.Request:
 
 
 def _read_url_text(url: str) -> str:
-    with urllib.request.urlopen(_request(url), timeout=30) as response:
-        return response.read().decode("utf-8-sig")
+    try:
+        with urllib.request.urlopen(_request(url), timeout=30) as response:
+            return response.read().decode("utf-8-sig")
+    except Exception as urllib_exc:
+        try:
+            import requests
+
+            headers = dict(_request(url).headers)
+            response = requests.get(url, headers=headers, timeout=30)
+            response.raise_for_status()
+            return response.content.decode("utf-8-sig")
+        except Exception as requests_exc:
+            raise RuntimeError(f"URL 읽기 실패: urllib={urllib_exc}; requests={requests_exc}") from requests_exc
 
 
 def _download_url(url: str, destination: Path) -> None:
     try:
         with urllib.request.urlopen(_request(url), timeout=120) as response:
             destination.write_bytes(response.read())
-    except urllib.error.HTTPError as exc:
-        raise RuntimeError(f"업데이트 다운로드 실패: HTTP {exc.code}") from exc
+            return
+    except Exception as urllib_exc:
+        try:
+            import requests
+
+            headers = dict(_request(url).headers)
+            with requests.get(url, headers=headers, timeout=120, stream=True) as response:
+                response.raise_for_status()
+                with destination.open("wb") as file:
+                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            file.write(chunk)
+            return
+        except Exception as requests_exc:
+            if isinstance(urllib_exc, urllib.error.HTTPError):
+                raise RuntimeError(
+                    f"업데이트 다운로드 실패: HTTP {urllib_exc.code}; requests={requests_exc}"
+                ) from requests_exc
+            raise RuntimeError(f"업데이트 다운로드 실패: urllib={urllib_exc}; requests={requests_exc}") from requests_exc

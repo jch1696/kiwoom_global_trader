@@ -9,7 +9,9 @@ from unittest.mock import patch
 from src.updater import (
     UpdateManifest,
     _download_asset_with_api,
+    _download_url,
     _read_manifest_with_direct_download,
+    _read_url_text,
     _release_download_url,
     _update_script,
     hidden_update_subprocess_kwargs,
@@ -108,6 +110,49 @@ class UpdaterTest(unittest.TestCase):
                     Path("KiwoomGlobalTraderConsole.zip"),
                 )
             )
+
+    def test_read_url_text_falls_back_to_requests(self) -> None:
+        class Response:
+            content = b'{"ok": true}'
+
+            def raise_for_status(self) -> None:
+                return None
+
+        with (
+            patch("src.updater.urllib.request.urlopen", side_effect=OSError("urllib blocked")),
+            patch("requests.get", return_value=Response()) as get,
+        ):
+            self.assertEqual(_read_url_text("https://example.com/update.json"), '{"ok": true}')
+
+        get.assert_called_once()
+
+    def test_download_url_falls_back_to_requests(self) -> None:
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc, _tb) -> None:
+                return None
+
+            def raise_for_status(self) -> None:
+                return None
+
+            def iter_content(self, chunk_size: int):
+                yield b"abc"
+                yield b"def"
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "asset.zip"
+            with (
+                patch("src.updater.urllib.request.urlopen", side_effect=OSError("urllib blocked")),
+                patch("requests.get", return_value=Response()) as get,
+            ):
+                _download_url("https://example.com/asset.zip", target)
+
+            self.assertEqual(target.read_bytes(), b"abcdef")
+            get.assert_called_once()
 
 
 if __name__ == "__main__":
