@@ -39,16 +39,17 @@ class _FakeCombo:
 
 
 class _FakeButton:
-    def __init__(self, title: str, checked: int = 0) -> None:
+    def __init__(self, title: str, checked: int = 0, rect: _RectValue | None = None) -> None:
         self.title = title
         self.checked = checked
         self.clicked = False
+        self.rect = rect or _Rect()
 
     def is_visible(self) -> bool:
         return True
 
-    def rectangle(self) -> _Rect:
-        return _Rect()
+    def rectangle(self):
+        return self.rect
 
     def class_name(self) -> str:
         return "Button"
@@ -68,8 +69,27 @@ class _FakeWindow:
     def __init__(self, controls) -> None:
         self.controls = controls
 
-    def descendants(self):
+    def descendants(self, class_name=None):
+        if class_name is not None:
+            return [control for control in self.controls if getattr(control, "class_name", lambda: "")() == class_name]
         return self.controls
+
+
+class _FakeEdit:
+    def __init__(self, rect: _RectValue) -> None:
+        self.rect = rect
+
+    def is_visible(self) -> bool:
+        return True
+
+    def rectangle(self) -> _RectValue:
+        return self.rect
+
+    def class_name(self) -> str:
+        return "Edit"
+
+    def window_text(self) -> str:
+        return ""
 
 
 class KiwoomHybridBrokerParseTest(unittest.TestCase):
@@ -227,6 +247,15 @@ class KiwoomHybridBrokerParseTest(unittest.TestCase):
 
         self.assertEqual(status, "already_unchecked")
         self.assertFalse(button.clicked)
+
+    def test_find_main_search_button_near_search_edit(self) -> None:
+        broker = KiwoomHybridBroker()
+        search_edit = _FakeEdit(_RectValue(100, 10, 140, 24))
+        far_button = _FakeButton("\ud654\uba74\ucc3e\uae30", rect=_RectValue(500, 10, 520, 26))
+        near_button = _FakeButton("\ud654\uba74\ucc3e\uae30", rect=_RectValue(145, 10, 165, 26))
+        window = _FakeWindow([far_button, search_edit, near_button])
+
+        self.assertIs(broker._find_main_search_button(window, search_edit), near_button)
 
     def test_set_account_dropdown_order_normalizes_and_deduplicates(self) -> None:
         broker = KiwoomHybridBroker()

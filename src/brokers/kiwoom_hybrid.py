@@ -1270,6 +1270,7 @@ class KiwoomHybridBroker(BrokerAdapter):
             int(rect.top + rect.height() * self.SEARCH_BOX_POINT[1]),
         )
         search_control = self._find_main_search_edit(main_window)
+        search_button = self._find_main_search_button(main_window, search_control)
 
         last_exc: Exception | None = None
         for _ in range(2):
@@ -1281,6 +1282,18 @@ class KiwoomHybridBroker(BrokerAdapter):
                 keyboard.send_keys("{ESC}")
                 time.sleep(0.1)
                 if search_control is not None:
+                    self._set_search_edit_value(search_control, window_code)
+                    if search_button is not None and self._click_button_without_mouse(search_button):
+                        time.sleep(1.8)
+                        if self._find_target_window(desktop, window_re) is not None:
+                            return
+                    try:
+                        keyboard.send_keys("{ENTER}")
+                    except Exception:
+                        pass
+                    time.sleep(0.6)
+                    if self._find_target_window(desktop, window_re) is not None:
+                        return
                     try:
                         search_control.set_focus()
                     except Exception:
@@ -1348,6 +1361,48 @@ class KiwoomHybridBroker(BrokerAdapter):
             return None
         candidates.sort(key=lambda item: (item[0], item[1]))
         return candidates[0][2]
+
+    def _find_main_search_button(self, main_window: Any, search_control: Any | None = None) -> Any | None:
+        try:
+            controls = main_window.descendants(class_name="Button")
+        except Exception:
+            return None
+        search_center = self._control_center(search_control) if search_control is not None else None
+        candidates: list[tuple[int, int, Any]] = []
+        for control in controls:
+            if not self._is_control_visible(control):
+                continue
+            title = self._safe_window_text(control)
+            if "화면찾기" not in title:
+                continue
+            try:
+                rect = control.rectangle()
+            except Exception:
+                continue
+            distance = 0
+            if search_center is not None:
+                center = self._control_center(control)
+                if center is not None:
+                    distance = abs(center[0] - search_center[0]) + abs(center[1] - search_center[1])
+            candidates.append((distance, int(rect.left), control))
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: (item[0], item[1]))
+        return candidates[0][2]
+
+    @staticmethod
+    def _click_button_without_mouse(control: Any) -> bool:
+        try:
+            handle = int(control.handle)
+        except Exception:
+            return False
+        try:
+            import win32con
+
+            win32gui.SendMessage(handle, win32con.BM_CLICK, 0, 0)
+            return True
+        except Exception:
+            return False
 
     @staticmethod
     def _control_center(control: Any) -> tuple[int, int] | None:
@@ -2484,7 +2539,10 @@ class KiwoomHybridBroker(BrokerAdapter):
         except Exception:
             pass
 
-        handle = self._safe_handle(control)
+        try:
+            handle = int(control.handle)
+        except Exception:
+            handle = 0
         if handle:
             try:
                 import win32con
@@ -2514,6 +2572,21 @@ class KiwoomHybridBroker(BrokerAdapter):
 
     def _set_search_edit_value(self, control: Any, value: str) -> None:
         from pywinauto import keyboard
+
+        try:
+            handle = int(control.handle)
+        except Exception:
+            handle = 0
+        if handle:
+            try:
+                import win32con
+
+                win32gui.SendMessage(handle, win32con.WM_SETTEXT, 0, value)
+                time.sleep(0.05)
+                if self._clean_text_cell(self._safe_window_text(control)) == value:
+                    return
+            except Exception:
+                pass
 
         try:
             control.set_edit_text("")
