@@ -54,7 +54,7 @@ def read_update_manifest_from_text(text: str) -> UpdateManifest:
 
 
 def check_for_update() -> UpdateCheckResult:
-    manifest = _read_manifest_with_gh() or _read_manifest_with_api()
+    manifest = _read_manifest_with_gh() or _read_manifest_with_api() or _read_manifest_with_direct_download()
     if manifest is None:
         return UpdateCheckResult(False, "업데이트 정보를 찾지 못했습니다")
     if not should_install_update(BUILD_COMMIT, manifest):
@@ -70,7 +70,8 @@ def install_update_and_restart(app_dir: Path, manifest: UpdateManifest) -> None:
     temp_dir = Path(tempfile.mkdtemp(prefix="kiwoom_update_"))
     zip_path = temp_dir / manifest.zip_asset
     if not _download_asset_with_gh(manifest, temp_dir):
-        _download_asset_with_api(manifest, zip_path)
+        if not _download_asset_with_api(manifest, zip_path):
+            _download_asset_with_direct_download(manifest, zip_path)
     if not zip_path.exists():
         raise RuntimeError(f"업데이트 zip 다운로드 실패: {manifest.zip_asset}")
 
@@ -277,18 +278,37 @@ def _read_manifest_with_api() -> UpdateManifest | None:
     return None
 
 
-def _download_asset_with_api(manifest: UpdateManifest, destination: Path) -> None:
-    release = _read_release_json(manifest.tag_name)
-    for asset in release.get("assets", []):
-        if asset.get("name") == manifest.zip_asset:
-            _download_url(str(asset["browser_download_url"]), destination)
-            return
-    raise RuntimeError(f"업데이트 파일을 찾지 못했습니다: {manifest.zip_asset}")
+def _read_manifest_with_direct_download() -> UpdateManifest | None:
+    try:
+        text = _read_url_text(_release_download_url(UPDATE_RELEASE_TAG, "update.json"))
+        return read_update_manifest_from_text(text)
+    except Exception:
+        return None
+
+
+def _download_asset_with_api(manifest: UpdateManifest, destination: Path) -> bool:
+    try:
+        release = _read_release_json(manifest.tag_name)
+        for asset in release.get("assets", []):
+            if asset.get("name") == manifest.zip_asset:
+                _download_url(str(asset["browser_download_url"]), destination)
+                return destination.exists()
+    except Exception:
+        return False
+    return False
+
+
+def _download_asset_with_direct_download(manifest: UpdateManifest, destination: Path) -> None:
+    _download_url(_release_download_url(manifest.tag_name, manifest.zip_asset), destination)
 
 
 def _read_release_json(tag_name: str) -> dict[str, object]:
     url = f"https://api.github.com/repos/{UPDATE_OWNER}/{UPDATE_REPO}/releases/tags/{tag_name}"
     return json.loads(_read_url_text(url))
+
+
+def _release_download_url(tag_name: str, asset_name: str) -> str:
+    return f"https://github.com/{UPDATE_OWNER}/{UPDATE_REPO}/releases/download/{tag_name}/{asset_name}"
 
 
 def _request(url: str) -> urllib.request.Request:

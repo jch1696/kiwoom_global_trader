@@ -4,9 +4,13 @@ import json
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from src.updater import (
     UpdateManifest,
+    _download_asset_with_api,
+    _read_manifest_with_direct_download,
+    _release_download_url,
     _update_script,
     hidden_update_subprocess_kwargs,
     maybe_auto_update,
@@ -75,6 +79,35 @@ class UpdaterTest(unittest.TestCase):
         self.assertFalse(updated)
         self.assertIn("소스 실행 모드", message)
         self.assertEqual(messages, [])
+
+    def test_release_download_url_uses_direct_asset_url(self) -> None:
+        self.assertEqual(
+            _release_download_url("auto-latest", "update.json"),
+            "https://github.com/jch1696/kiwoom_global_trader/releases/download/auto-latest/update.json",
+        )
+
+    def test_reads_manifest_from_direct_download_url(self) -> None:
+        with patch(
+            "src.updater._read_url_text",
+            return_value='{"tag_name":"auto-latest","build_commit":"ab515ac","app_version":"auto-16"}',
+        ) as read_url:
+            manifest = _read_manifest_with_direct_download()
+
+        self.assertIsNotNone(manifest)
+        assert manifest is not None
+        self.assertEqual(manifest.build_commit, "ab515ac")
+        read_url.assert_called_once_with(
+            "https://github.com/jch1696/kiwoom_global_trader/releases/download/auto-latest/update.json"
+        )
+
+    def test_download_asset_with_api_returns_false_when_api_fails(self) -> None:
+        with patch("src.updater._read_release_json", side_effect=RuntimeError("blocked")):
+            self.assertFalse(
+                _download_asset_with_api(
+                    UpdateManifest("auto-latest", "ab515ac", "KiwoomGlobalTraderConsole.zip"),
+                    Path("KiwoomGlobalTraderConsole.zip"),
+                )
+            )
 
 
 if __name__ == "__main__":
