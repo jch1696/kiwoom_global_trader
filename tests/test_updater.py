@@ -1,10 +1,18 @@
 from __future__ import annotations
 
 import json
+import sys
 import unittest
 from pathlib import Path
 
-from src.updater import UpdateManifest, _update_script, maybe_auto_update, read_update_manifest_from_text, should_install_update
+from src.updater import (
+    UpdateManifest,
+    _update_script,
+    hidden_update_subprocess_kwargs,
+    maybe_auto_update,
+    read_update_manifest_from_text,
+    should_install_update,
+)
 
 
 class UpdaterTest(unittest.TestCase):
@@ -50,6 +58,15 @@ class UpdaterTest(unittest.TestCase):
         self.assertIn("_internal\\python*.dll", script)
         self.assertIn("update.log", script)
         self.assertIn("config.live.json", script)
+
+    def test_hidden_update_subprocess_kwargs_hides_windows_console(self) -> None:
+        kwargs = hidden_update_subprocess_kwargs()
+
+        if sys.platform == "win32":
+            self.assertIn("creationflags", kwargs)
+            self.assertIn("startupinfo", kwargs)
+        else:
+            self.assertEqual(kwargs, {})
 
     def test_auto_update_skips_source_mode_without_progress(self) -> None:
         messages: list[str] = []

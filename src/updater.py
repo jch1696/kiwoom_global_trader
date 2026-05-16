@@ -94,8 +94,20 @@ def install_update_and_restart(app_dir: Path, manifest: UpdateManifest) -> None:
             "-File",
             str(script_path),
         ],
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        **hidden_update_subprocess_kwargs(),
     )
+
+
+def hidden_update_subprocess_kwargs() -> dict[str, object]:
+    if sys.platform != "win32":
+        return {}
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = 0
+    return {
+        "startupinfo": startupinfo,
+        "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    }
 
 
 def maybe_auto_update(app_dir: Path, progress: Callable[[str], None] | None = None) -> tuple[bool, str]:
@@ -214,6 +226,7 @@ def _read_manifest_with_gh() -> UpdateManifest | None:
             encoding="utf-8",
             errors="replace",
             timeout=30,
+            **hidden_update_subprocess_kwargs(),
         )
         manifest_path = temp_dir / "update.json"
         if result.returncode != 0 or not manifest_path.exists():
@@ -244,6 +257,7 @@ def _download_asset_with_gh(manifest: UpdateManifest, destination_dir: Path) -> 
         encoding="utf-8",
         errors="replace",
         timeout=120,
+        **hidden_update_subprocess_kwargs(),
     )
     return result.returncode == 0 and (destination_dir / manifest.zip_asset).exists()
 

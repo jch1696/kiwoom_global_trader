@@ -477,6 +477,36 @@ def parse_strategy_result_line(line: str) -> tuple[str, str, str] | None:
     return status, sheet_name.strip(), message.strip() or "-"
 
 
+def should_display_command_output_line(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if parse_strategy_result_line(stripped) is not None:
+        return True
+    if parse_live_order_result_line(stripped) is not None:
+        return True
+    if line_indicates_failure(stripped):
+        return True
+    visible_prefixes = (
+        "CANCEL_ORDER",
+        "PROBE_",
+        "MAIN_TOOLBAR",
+    )
+    if stripped.startswith(visible_prefixes):
+        return True
+    noisy_prefixes = (
+        "[account]",
+        "[balance]",
+        "[copy ",
+        "[cycle]",
+        "[menu]",
+        "[open_orders]",
+        "[scrape-lv]",
+        "[sheet]",
+    )
+    return not stripped.startswith(noisy_prefixes)
+
+
 def parse_live_order_result_line(line: str) -> tuple[str, str] | None:
     match = re.match(
         r"^PLACE_DECISION_ORDER\s+success=(True|False)\s+side=(buy|sell)\s+tier=([^\s]+)\s+price=([^\s]+)\s+qty=([^\s]+)\s+order[-_]id=([^\s]*)\s+message=(.*)$",
@@ -1584,7 +1614,8 @@ def _run_tk_app(config_path: str) -> int:
                 self.launch_hts_now()
 
         def _worker(self, command: list[str], action: str, sheet_name: str | None) -> None:
-            self.queue.put(("line", f"$ {_format_command(command)}"))
+            target = f" / {sheet_name}" if sheet_name else ""
+            self.queue.put(("line", f"[console] 명령 실행: {action_label(action)}{target}"))
             command_failed = False
             hts_missing = False
             try:
@@ -1605,7 +1636,7 @@ def _run_tk_app(config_path: str) -> int:
                         command_failed = True
                     if line_indicates_hts_missing(line):
                         hts_missing = True
-                    self.queue.put(("line", line))
+                    self.queue.put(("command_line", line))
                 code = process.wait()
             except Exception as exc:
                 self.queue.put(("line", f"ERROR: {exc}"))
@@ -1619,6 +1650,8 @@ def _run_tk_app(config_path: str) -> int:
                     kind, payload = self.queue.get_nowait()
                     if kind == "line":
                         self.append_log(str(payload))
+                    elif kind == "command_line":
+                        self.append_log(str(payload), display=should_display_command_output_line(str(payload)))
                     elif kind == "finished":
                         code, action, sheet_name, command_failed, hts_missing = payload
                         self.on_command_finished(
@@ -1738,13 +1771,11 @@ def _run_tk_app(config_path: str) -> int:
             order_action = {"dry_run": "dry_run_place", "fill_order": "dry_run_fill_order"}.get(action)
             if order_action is None:
                 return
-            summaries = latest_order_summaries(project_dir, sheet_name=sheet_name, action=order_action, limit=4)
+            summaries = latest_order_summaries(project_dir, sheet_name=sheet_name, action=order_action, limit=1)
             if not summaries:
                 self.append_log(f"[console] 최근 {order_action} 주문 로그가 없습니다")
                 return
-            self.append_log(f"[console] 최근 {order_action} 로그:")
-            for summary in summaries:
-                self.append_log(f"  {summary}")
+            self.append_log(f"[console] 최근 주문 로그: {summaries[-1]}")
 
         def set_running(self, running: bool, action: str, sheet_name: str | None) -> None:
             self.running = running
@@ -1836,7 +1867,7 @@ def _run_tk_app(config_path: str) -> int:
             elif action == "fill_order":
                 state.fill_order_at = None
 
-        def append_log(self, line: str) -> None:
+        def append_log(self, line: str, *, display: bool = True) -> None:
             live_order = parse_live_order_result_line(line)
             if live_order is not None and self.current_action == "live_order":
                 status, message = live_order
@@ -1854,6 +1885,8 @@ def _run_tk_app(config_path: str) -> int:
                 status, sheet_name, message = parsed
                 self.seen_strategy_result = True
                 self.mark_sheet(sheet_name, status, message, self.current_action)
+            if not display:
+                return
             self.log_lines.append(line)
             if len(self.log_lines) > MAX_LOG_LINES:
                 self.log_lines = self.log_lines[-MAX_LOG_LINES:]

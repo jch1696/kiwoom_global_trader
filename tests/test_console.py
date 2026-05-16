@@ -40,6 +40,7 @@ from src.console import (
     save_service_account_key_to_config,
     service_account_email_from_file,
     hidden_console_subprocess_kwargs,
+    should_display_command_output_line,
     should_run_daily_time,
     should_auto_fill_after_dry_run,
     should_auto_live_after_fill_order,
@@ -247,6 +248,12 @@ class ConsoleTest(unittest.TestCase):
         self.assertTrue(line_indicates_hts_missing("SKIP/FAIL LABU55: HTS main window is not open"))
         self.assertTrue(line_indicates_hts_missing("failed while typing 2150 into search box"))
         self.assertFalse(line_indicates_hts_missing("OK LABU55: tier=6 actions=place:sell:195.79:5"))
+
+    def test_should_display_command_output_line_hides_noisy_debug(self) -> None:
+        self.assertFalse(should_display_command_output_line("  [menu] item 10: '복사(&Z)'"))
+        self.assertFalse(should_display_command_output_line("  [copy row_y=0.46] step2 result: ok"))
+        self.assertTrue(should_display_command_output_line("OK LABU55: tier=6 actions=place:sell:195.79:5"))
+        self.assertTrue(should_display_command_output_line("SKIP/FAIL LABU55: get_balance failed after 1 attempts"))
 
     def test_parse_strategy_result_line_ok(self) -> None:
         parsed = parse_strategy_result_line("OK LABU55: tier=6 actions=place:sell:195.79:5")
