@@ -911,6 +911,10 @@ class KiwoomHybridBroker(BrokerAdapter):
         if not item_order:
             item_order = list(self._configured_account_dropdown_items)
             print(f"  [account] capture using configured account order={item_order or 'none'}", flush=True)
+        current = self._normalize_account_no(self._clean_text_cell(self._safe_window_text(combo)))
+        if current and re.fullmatch(self.ACCOUNT_PATTERN, current) and current not in item_order:
+            item_order.append(current)
+            print(f"  [account] capture appended current account to order={item_order}", flush=True)
 
         target_index = self._account_index(item_order, target)
         if target_index < 0:

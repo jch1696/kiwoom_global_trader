@@ -23,6 +23,7 @@ from .updater import maybe_auto_update
 
 MAX_LOG_LINES = 500
 LIVE_VALIDATION_WINDOW_MIN = 30
+HTS_CHECK_DELAY_AFTER_LOGIN_MS = 60_000
 DEFAULT_CONSOLE_SETTINGS = {
     "auto_schedule": {
         "start": "00:00",
@@ -1364,7 +1365,7 @@ def _run_tk_app(config_path: str) -> int:
             self.hts_login_done_date = datetime.now().strftime("%Y-%m-%d")
             self.append_log(f"[console] {message}")
             self.send_console_telegram(f"[HTS 간편인증 완료]\n{message}")
-            self.root.after(12000, self.check_hts_after_login)
+            self.root.after(HTS_CHECK_DELAY_AFTER_LOGIN_MS, self.check_hts_after_login)
 
         def check_hts_after_login(self) -> None:
             if self.running:

@@ -38,6 +38,14 @@ class _FakeCombo:
         return _RectValue(100, 80, 220, 100)
 
 
+class _FakeAccountCombo(_FakeCombo):
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    def window_text(self) -> str:
+        return self.text
+
+
 class _FakeButton:
     def __init__(self, title: str, checked: int = 0, rect: _RectValue | None = None) -> None:
         self.title = title
@@ -279,6 +287,27 @@ class KiwoomHybridBrokerParseTest(unittest.TestCase):
 
         self.assertTrue(selected)
         self.assertEqual(clicked, [(142, 135)])
+
+    def test_account_dropdown_capture_includes_current_account_for_row_estimate(self) -> None:
+        broker = KiwoomHybridBroker(["61116793", "61116859"])
+        clicked: list[tuple[int, int]] = []
+
+        with (
+            patch("src.brokers.kiwoom_hybrid.win32gui.GetClassName", return_value="SysListView32"),
+            patch.object(broker, "_hwnd_rect", return_value=(100, 100, 270, 160)),
+            patch.object(broker, "_is_near_account_dropdown", return_value=True),
+            patch.object(broker, "_capture_account_dropdown", return_value=(None, "")),
+            patch.object(broker, "_mouse_click_screen", side_effect=lambda coords: clicked.append(coords)),
+        ):
+            selected = broker._select_account_from_dropdown_capture(
+                1234,
+                _FakeAccountCombo("6437-4443 설유라"),
+                "6111-6859",
+                [],
+            )
+
+        self.assertTrue(selected)
+        self.assertEqual(clicked, [(142, 130)])
 
 
 if __name__ == "__main__":
