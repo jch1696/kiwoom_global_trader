@@ -209,6 +209,13 @@ class KiwoomHybridBrokerParseTest(unittest.TestCase):
         self.assertEqual(status, "already_unchecked")
         self.assertFalse(button.clicked)
 
+    def test_set_account_dropdown_order_normalizes_and_deduplicates(self) -> None:
+        broker = KiwoomHybridBroker()
+
+        broker.set_account_dropdown_order(["61078617", "6107-8617", "bad", "61520174"])
+
+        self.assertEqual(broker._configured_account_dropdown_items, ["6107-8617", "6152-0174"])
+
 
 if __name__ == "__main__":
     unittest.main()

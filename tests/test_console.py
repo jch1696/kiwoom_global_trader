@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from src.console import (
@@ -35,8 +36,10 @@ from src.console import (
     resolve_credential_path,
     save_public_csv_tabs_to_config,
     save_public_xlsx_to_config,
+    save_account_dropdown_order_from_config,
     save_service_account_key_to_config,
     service_account_email_from_file,
+    hidden_console_subprocess_kwargs,
     should_run_daily_time,
     should_auto_fill_after_dry_run,
     should_auto_live_after_fill_order,
@@ -138,6 +141,27 @@ class ConsoleTest(unittest.TestCase):
         self.assertEqual(data["google"]["public_csv_tabs"], {})
         self.assertEqual(data["google"]["public_xlsx_url"], "https://docs.google.com/spreadsheets/d/test-sheet-id/export?format=xlsx")
 
+    def test_save_account_dropdown_order_from_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            path.write_text(
+                json.dumps({"google": {"public_xlsx_url": "https://example.test/book.xlsx"}}),
+                encoding="utf-8",
+            )
+            strategies = [
+                SimpleNamespace(account_no="61078617"),
+                SimpleNamespace(account_no="61078631"),
+                SimpleNamespace(account_no="61078617"),
+            ]
+
+            with patch("src.console.PublicXlsxSheetReader") as reader_cls:
+                reader_cls.return_value.read_strategies.return_value = strategies
+                accounts = save_account_dropdown_order_from_config(path)
+            data = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertEqual(accounts, ["61078617", "61078631"])
+        self.assertEqual(data["broker"]["account_dropdown_order"], ["61078617", "61078631"])
+
     def test_service_account_email_from_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "key.json"
@@ -191,6 +215,15 @@ class ConsoleTest(unittest.TestCase):
         self.assertEqual(command[:3], [sys.executable, "--cli", "--config"])
         self.assertIn("--dry-run", command)
         self.assertEqual(command[-2:], ["--only-sheet", "LABU55"])
+
+    def test_hidden_console_subprocess_kwargs_hides_windows_console(self) -> None:
+        kwargs = hidden_console_subprocess_kwargs()
+
+        if sys.platform == "win32":
+            self.assertIn("creationflags", kwargs)
+            self.assertIn("startupinfo", kwargs)
+        else:
+            self.assertEqual(kwargs, {})
 
     def test_build_fill_order_command(self) -> None:
         command = build_cli_command("config.live.json", "fill_order", "SOXL55")

@@ -108,11 +108,21 @@ class KiwoomHybridBroker(BrokerAdapter):
         self._accounts: set[str] = set()
         self._manual_mini_order_point: tuple[int, int] | None = None
         self._last_account_dropdown_items: list[str] = []
-        self._configured_account_dropdown_items = [
+        self._configured_account_dropdown_items: list[str] = []
+        self.set_account_dropdown_order(account_dropdown_order or [])
+
+    def set_account_dropdown_order(self, account_dropdown_order: list[str]) -> None:
+        normalized_items = [
             self._normalize_account_no(item)
-            for item in (account_dropdown_order or [])
+            for item in account_dropdown_order
             if re.fullmatch(self.ACCOUNT_PATTERN, self._normalize_account_no(item))
         ]
+        unique_items: list[str] = []
+        for item in normalized_items:
+            if item not in unique_items:
+                unique_items.append(item)
+        if unique_items:
+            self._configured_account_dropdown_items = unique_items
 
     def set_manual_mini_order_point(self, raw_value: str) -> None:
         try:

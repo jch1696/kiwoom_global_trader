@@ -17,7 +17,7 @@ from pathlib import Path
 from .config import GoogleConfig, NotifyConfig, load_config
 from .env_loader import load_env
 from .notifier import TelegramNotifier
-from .sheet_reader import PublicXlsxSheetReader, _read_url_text
+from .sheet_reader import PublicCsvSheetReader, PublicXlsxSheetReader, _read_url_text
 from .updater import maybe_auto_update
 
 
@@ -344,6 +344,29 @@ def save_public_xlsx_to_config(config_path: str | Path, sheet_url: str, public_x
     return path
 
 
+def save_account_dropdown_order_from_config(config_path: str | Path) -> list[str]:
+    path = ensure_config_file(config_path)
+    config = load_config(path)
+    if config.google.public_csv_tabs:
+        strategies = PublicCsvSheetReader(config.google).read_strategies()
+    elif config.google.public_xlsx_url:
+        strategies = PublicXlsxSheetReader(config.google).read_strategies()
+    else:
+        return []
+    accounts: list[str] = []
+    for strategy in strategies:
+        account_no = str(strategy.account_no).strip()
+        if account_no and account_no not in accounts:
+            accounts.append(account_no)
+    if not accounts:
+        return []
+    data = json.loads(path.read_text(encoding="utf-8"))
+    broker = data.setdefault("broker", {})
+    broker["account_dropdown_order"] = accounts
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return accounts
+
+
 def service_account_email_from_file(credential_path: str | Path) -> str:
     path = Path(credential_path)
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -618,6 +641,18 @@ def launch_hts_process(exe_path: str) -> subprocess.Popen:
     if not path.exists():
         raise FileNotFoundError(f"HTS 실행파일을 찾을 수 없습니다: {exe_path}")
     return subprocess.Popen([str(path)], cwd=str(path.parent))
+
+
+def hidden_console_subprocess_kwargs() -> dict[str, object]:
+    if sys.platform != "win32":
+        return {}
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = 0
+    return {
+        "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        "startupinfo": startupinfo,
+    }
 
 
 def login_simple_certificate(pin: str, timeout_sec: int = 20) -> str:
@@ -1061,13 +1096,15 @@ def _run_tk_app(config_path: str) -> int:
                 )
                 if source_type == "csv":
                     save_public_csv_tabs_to_config(config_path, sheet_url, tabs)
+                    accounts = save_account_dropdown_order_from_config(config_path)
                     detail = f"{len(tabs)}개 탭을 CSV 방식으로 설정에 저장했습니다."
-                    log_detail = f"mode=csv tabs={','.join(tabs.keys())}"
+                    log_detail = f"mode=csv tabs={','.join(tabs.keys())} accounts={','.join(accounts) or '-'}"
                 else:
                     save_public_xlsx_to_config(config_path, sheet_url, xlsx_url)
+                    accounts = save_account_dropdown_order_from_config(config_path)
                     sheets = load_sheet_tabs(config_path)
                     detail = f"{len(sheets)}개 주문시트를 XLSX 방식으로 설정에 저장했습니다."
-                    log_detail = f"mode=xlsx tabs={','.join(sheet.name for sheet in sheets)}"
+                    log_detail = f"mode=xlsx tabs={','.join(sheet.name for sheet in sheets)} accounts={','.join(accounts) or '-'}"
             except Exception as exc:
                 self.append_log(f"[console] 시트 연결 실패: {exc}")
                 messagebox.showerror("시트 연결 오류", str(exc))
@@ -1533,6 +1570,7 @@ def _run_tk_app(config_path: str) -> int:
                     text=True,
                     encoding=_console_encoding(),
                     errors="replace",
+                    **hidden_console_subprocess_kwargs(),
                 )
                 assert process.stdout is not None
                 for raw_line in process.stdout:

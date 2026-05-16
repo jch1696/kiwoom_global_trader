@@ -53,7 +53,9 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     _load_runtime_env(args.config)
-    config = load_config(args.config)
+    original_config = load_config(args.config)
+    account_dropdown_order = _strategy_account_order(original_config, args.config)
+    config = original_config
     if args.only_sheet:
         config = _config_for_only_sheets(config, args.only_sheet)
     if args.test_telegram:
@@ -73,6 +75,8 @@ def main() -> None:
         simulate_open_orders=simulate_open_orders if args.simulate_open_order else None,
     )
     broker = scheduler.order_manager.broker
+    if account_dropdown_order and hasattr(broker, "set_account_dropdown_order"):
+        broker.set_account_dropdown_order(account_dropdown_order)
     if args.mini_order_point and hasattr(broker, "set_manual_mini_order_point"):
         broker.set_manual_mini_order_point(args.mini_order_point)
 
@@ -413,6 +417,22 @@ def _filter_strategies(strategies, only_sheets: list[str]):
         return strategies
     allowed = {sheet.upper() for sheet in only_sheets}
     return [strategy for strategy in strategies if strategy.sheet_name.upper() in allowed]
+
+
+def _strategy_account_order(config, config_path: str) -> list[str]:
+    configured = list(config.broker.account_dropdown_order or [])
+    if configured:
+        return configured
+    try:
+        scheduler = build_scheduler(config, config_path)
+        strategies = scheduler.sheet_reader.read_strategies()
+    except Exception:
+        return configured
+    for strategy in strategies:
+        account_no = str(getattr(strategy, "account_no", "")).strip()
+        if account_no and account_no not in configured:
+            configured.append(account_no)
+    return configured
 
 
 def _config_for_only_sheets(config, only_sheets: list[str]):
