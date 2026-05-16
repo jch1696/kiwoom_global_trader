@@ -822,9 +822,35 @@ def _run_tk_app(config_path: str) -> int:
     from tkinter import filedialog, messagebox, ttk
 
     project_dir = app_base_dir()
-    updated, update_message = maybe_auto_update(project_dir)
+    update_window: tk.Tk | None = None
+    update_status_var: tk.StringVar | None = None
+    if getattr(sys, "frozen", False):
+        update_window = tk.Tk()
+        update_window.title("키움글로벌 자동매매 콘솔")
+        update_window.geometry("360x110")
+        update_window.resizable(False, False)
+        update_status_var = tk.StringVar(value="업데이트 확인 중...")
+        ttk.Label(update_window, textvariable=update_status_var, anchor=tk.CENTER).pack(fill=tk.BOTH, expand=True, padx=18, pady=18)
+        update_window.update()
+
+    def set_update_status(message: str) -> None:
+        if update_window is None or update_status_var is None:
+            return
+        try:
+            update_status_var.set(message)
+            update_window.update()
+        except Exception:
+            pass
+
+    updated, update_message = maybe_auto_update(project_dir, progress=set_update_status)
     if updated:
+        set_update_status("업데이트 적용 중입니다. 잠시 후 다시 시작합니다.")
         return 0
+    if update_window is not None:
+        try:
+            update_window.destroy()
+        except Exception:
+            pass
 
     class TkConsole:
         def __init__(self) -> None:

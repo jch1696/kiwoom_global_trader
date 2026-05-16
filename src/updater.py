@@ -10,6 +10,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from .build_info import APP_VERSION, BUILD_COMMIT, UPDATE_OWNER, UPDATE_RELEASE_TAG, UPDATE_REPO, UPDATE_ZIP_ASSET
 
@@ -97,14 +98,22 @@ def install_update_and_restart(app_dir: Path, manifest: UpdateManifest) -> None:
     )
 
 
-def maybe_auto_update(app_dir: Path) -> tuple[bool, str]:
+def maybe_auto_update(app_dir: Path, progress: Callable[[str], None] | None = None) -> tuple[bool, str]:
+    def report(message: str) -> None:
+        if progress is not None:
+            progress(message)
+
     if not getattr(sys, "frozen", False):
         return False, "소스 실행 모드에서는 자동 업데이트를 건너뜁니다"
     try:
+        report("업데이트 확인 중...")
         result = check_for_update()
         if not result.available or result.manifest is None:
+            report(result.message)
             return False, result.message
+        report("업데이트 다운로드 및 적용 준비 중...")
         install_update_and_restart(app_dir, result.manifest)
+        report("업데이트 적용 중입니다. 잠시 후 콘솔을 다시 시작합니다.")
         return True, result.message + " - 업데이트 후 다시 시작합니다"
     except Exception as exc:
         return False, f"자동 업데이트 실패: {exc}"

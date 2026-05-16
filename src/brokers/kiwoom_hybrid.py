@@ -210,6 +210,7 @@ class KiwoomHybridBroker(BrokerAdapter):
         self._raise_if_order_unavailable_popup()
         self._accounts.add(account_no)
         self.reset_trading_windows()
+        self.close_window_by_re(self.BALANCE_WINDOW_RE)
         self.close_window_by_re(self.OPEN_ORDERS_WINDOW_RE)
         desktop = Desktop(backend="win32")
         window = self._ensure_window_open(desktop, self.OPEN_ORDERS_WINDOW_CODE, self.OPEN_ORDERS_WINDOW_RE)
@@ -1305,6 +1306,8 @@ class KiwoomHybridBroker(BrokerAdapter):
                 keyboard.send_keys("^a{BACKSPACE}")
                 time.sleep(0.05)
                 keyboard.send_keys(window_code, with_spaces=True)
+                time.sleep(0.05)
+                keyboard.send_keys("{ENTER}")
                 time.sleep(1.8)
                 if self._find_target_window(desktop, window_re) is not None:
                     return
