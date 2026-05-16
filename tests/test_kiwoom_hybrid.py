@@ -19,6 +19,25 @@ class _Rect:
         return self.bottom - self.top
 
 
+class _RectValue:
+    def __init__(self, left: int, top: int, right: int, bottom: int) -> None:
+        self.left = left
+        self.top = top
+        self.right = right
+        self.bottom = bottom
+
+    def width(self) -> int:
+        return self.right - self.left
+
+    def height(self) -> int:
+        return self.bottom - self.top
+
+
+class _FakeCombo:
+    def rectangle(self) -> _RectValue:
+        return _RectValue(100, 80, 220, 100)
+
+
 class _FakeButton:
     def __init__(self, title: str, checked: int = 0) -> None:
         self.title = title
@@ -215,6 +234,22 @@ class KiwoomHybridBrokerParseTest(unittest.TestCase):
         broker.set_account_dropdown_order(["61078617", "6107-8617", "bad", "61520174"])
 
         self.assertEqual(broker._configured_account_dropdown_items, ["6107-8617", "6152-0174"])
+
+    def test_account_dropdown_capture_uses_estimated_rows_when_pil_capture_fails(self) -> None:
+        broker = KiwoomHybridBroker(["61078617", "61078631", "61520174", "63766487"])
+        clicked: list[tuple[int, int]] = []
+
+        with (
+            patch("src.brokers.kiwoom_hybrid.win32gui.GetClassName", return_value="SysListView32"),
+            patch.object(broker, "_hwnd_rect", return_value=(100, 100, 270, 156)),
+            patch.object(broker, "_is_near_account_dropdown", return_value=True),
+            patch.object(broker, "_capture_account_dropdown", return_value=(None, "")),
+            patch.object(broker, "_mouse_click_screen", side_effect=lambda coords: clicked.append(coords)),
+        ):
+            selected = broker._select_account_from_dropdown_capture(1234, _FakeCombo(), "6152-0174", [])
+
+        self.assertTrue(selected)
+        self.assertEqual(clicked, [(142, 135)])
 
 
 if __name__ == "__main__":

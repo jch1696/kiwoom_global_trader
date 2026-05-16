@@ -917,9 +917,7 @@ class KiwoomHybridBroker(BrokerAdapter):
             return False
 
         image, image_path = self._capture_account_dropdown(dropdown_rect)
-        if image is None:
-            return False
-        row_centers = self._account_row_centers_from_capture(image)
+        row_centers = self._account_row_centers_from_capture(image) if image is not None else []
         print(f"  [account] capture rows={row_centers or 'none'} path={image_path or '-'}", flush=True)
         if len(row_centers) <= target_index:
             row_centers = self._estimated_account_row_centers(dropdown_rect, len(item_order))

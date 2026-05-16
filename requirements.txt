@@ -1,6 +1,7 @@
 google-api-python-client
 google-auth
 openpyxl
+Pillow
 pyperclip
 pywin32
 pywinauto
