@@ -2,20 +2,23 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
 from src.updater import (
-    UPDATE_RELEASE_URL,
     UpdateCheckResult,
     UpdateManifest,
     _download_asset_with_api,
     _download_url,
+    _prepare_update_runner,
     _read_manifest_with_direct_download,
     _read_url_text,
     _release_download_url,
     _update_script,
+    apply_update_and_restart,
     hidden_update_subprocess_kwargs,
     maybe_auto_update,
     read_update_manifest_from_text,
@@ -53,7 +56,7 @@ class UpdaterTest(unittest.TestCase):
         self.assertFalse(should_install_update("abc1234", UpdateManifest("auto-latest", "")))
         self.assertFalse(should_install_update("abc1234", None))
 
-    def test_update_script_replaces_internal_runtime_safely(self) -> None:
+    def test_update_script_is_disabled_power_shell_notice(self) -> None:
         script = _update_script(
             pid=123,
             zip_path=Path(r"C:\Temp\KiwoomGlobalTraderConsole.zip"),
@@ -61,11 +64,9 @@ class UpdaterTest(unittest.TestCase):
             exe_path=Path(r"C:\App\KiwoomGlobalTraderConsole.exe"),
         )
 
-        self.assertIn('Join-Path $appDir "_internal"', script)
-        self.assertIn("Remove-Item -LiteralPath $internalDir -Recurse -Force", script)
-        self.assertIn("_internal\\python*.dll", script)
-        self.assertIn("update.log", script)
-        self.assertIn("config.live.json", script)
+        self.assertIn("PowerShell updater is disabled", script)
+        self.assertIn("--apply-update", script)
+        self.assertIn("--update-zip", script)
 
     def test_hidden_update_subprocess_kwargs_hides_windows_console(self) -> None:
         kwargs = hidden_update_subprocess_kwargs()
@@ -84,7 +85,7 @@ class UpdaterTest(unittest.TestCase):
         self.assertIn("소스 실행 모드", message)
         self.assertEqual(messages, [])
 
-    def test_auto_update_reports_link_without_installing_when_update_exists(self) -> None:
+    def test_auto_update_applies_update_when_update_exists(self) -> None:
         messages: list[str] = []
         manifest = UpdateManifest("auto-latest", "new1234", app_version="auto-20")
 
@@ -95,11 +96,54 @@ class UpdaterTest(unittest.TestCase):
         ):
             updated, message = maybe_auto_update(Path("C:/App"), progress=messages.append)
 
-        self.assertFalse(updated)
-        self.assertIn(UPDATE_RELEASE_URL, message)
-        self.assertIn("수동 교체", message)
-        self.assertEqual(messages[-1], "새 버전이 있습니다. 콘솔 실행 후 로그의 다운로드 주소를 확인하세요.")
-        install.assert_not_called()
+        self.assertTrue(updated)
+        self.assertIn("자동 업데이트 적용 중", message)
+        self.assertEqual(messages[-1], "새 버전이 있습니다. 자동 업데이트를 적용합니다...")
+        install.assert_called_once_with(Path("C:/App"), manifest)
+
+    def test_prepare_update_runner_copies_internal_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_dir = root / "app"
+            temp_dir = root / "temp"
+            (app_dir / "_internal").mkdir(parents=True)
+            temp_dir.mkdir()
+            (app_dir / "KiwoomGlobalTraderCli.exe").write_text("cli", encoding="utf-8")
+            (app_dir / "_internal" / "python311.dll").write_text("runtime", encoding="utf-8")
+
+            updater = _prepare_update_runner(app_dir, temp_dir)
+
+            self.assertEqual(updater, temp_dir / "KiwoomGlobalTraderUpdater.exe")
+            self.assertEqual(updater.read_text(encoding="utf-8"), "cli")
+            self.assertTrue((temp_dir / "_internal" / "python311.dll").exists())
+
+    def test_apply_update_preserves_user_files_and_restarts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_dir = root / "app"
+            update_dir = root / "update"
+            app_dir.mkdir()
+            update_dir.mkdir()
+            (app_dir / "_internal").mkdir()
+            (app_dir / "_internal" / "python-old.dll").write_text("old", encoding="utf-8")
+            (app_dir / "config.live.json").write_text("user-config", encoding="utf-8")
+            zip_path = root / "update.zip"
+            with zipfile.ZipFile(zip_path, "w") as archive:
+                archive.writestr("_internal/python-new.dll", "new")
+                archive.writestr("KiwoomGlobalTraderConsole.exe", "exe")
+                archive.writestr("KiwoomGlobalTraderCli.exe", "cli")
+                archive.writestr("config.live.json", "release-config")
+
+            with (
+                patch("src.updater._wait_for_process_exit"),
+                patch("src.updater.subprocess.Popen") as popen,
+            ):
+                apply_update_and_restart(123, zip_path, app_dir, app_dir / "KiwoomGlobalTraderConsole.exe")
+
+            self.assertEqual((app_dir / "config.live.json").read_text(encoding="utf-8"), "user-config")
+            self.assertTrue((app_dir / "_internal" / "python-new.dll").exists())
+            self.assertFalse((app_dir / "_internal" / "python-old.dll").exists())
+            popen.assert_called_once()
 
     def test_release_download_url_uses_direct_asset_url(self) -> None:
         self.assertEqual(
@@ -159,8 +203,6 @@ class UpdaterTest(unittest.TestCase):
             def iter_content(self, chunk_size: int):
                 yield b"abc"
                 yield b"def"
-
-        import tempfile
 
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "asset.zip"

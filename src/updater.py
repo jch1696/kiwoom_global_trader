@@ -6,8 +6,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -61,11 +63,7 @@ def check_for_update() -> UpdateCheckResult:
         return UpdateCheckResult(False, "업데이트 정보를 찾지 못했습니다")
     if not should_install_update(BUILD_COMMIT, manifest):
         return UpdateCheckResult(False, f"최신 버전입니다 ({APP_VERSION}, {BUILD_COMMIT})", manifest)
-    return UpdateCheckResult(
-        True,
-        f"새 버전이 있습니다: {manifest.app_version} / {manifest.build_commit}",
-        manifest,
-    )
+    return UpdateCheckResult(True, f"새 버전이 있습니다: {manifest.app_version} / {manifest.build_commit}", manifest)
 
 
 def install_update_and_restart(app_dir: Path, manifest: UpdateManifest) -> None:
@@ -75,30 +73,44 @@ def install_update_and_restart(app_dir: Path, manifest: UpdateManifest) -> None:
         if not _download_asset_with_api(manifest, zip_path):
             _download_asset_with_direct_download(manifest, zip_path)
     if not zip_path.exists():
-        raise RuntimeError(f"업데이트 zip 다운로드 실패: {manifest.zip_asset}")
+        raise RuntimeError(f"업데이트 ZIP 다운로드 실패: {manifest.zip_asset}")
 
-    script_path = temp_dir / "apply_update.ps1"
+    updater_exe = _prepare_update_runner(app_dir, temp_dir)
     exe_path = app_dir / "KiwoomGlobalTraderConsole.exe"
-    script_path.write_text(
-        _update_script(
-            pid=os.getpid(),
-            zip_path=zip_path,
-            app_dir=app_dir,
-            exe_path=exe_path,
-        ),
-        encoding="utf-8",
-    )
     subprocess.Popen(
         [
-            "powershell",
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(script_path),
+            str(updater_exe),
+            "--apply-update",
+            "--update-pid",
+            str(os.getpid()),
+            "--update-zip",
+            str(zip_path),
+            "--update-app-dir",
+            str(app_dir),
+            "--update-exe",
+            str(exe_path),
         ],
         **hidden_update_subprocess_kwargs(),
     )
+
+
+def _find_update_runner(app_dir: Path) -> Path:
+    cli_path = app_dir / "KiwoomGlobalTraderCli.exe"
+    if cli_path.exists():
+        return cli_path
+    console_path = app_dir / "KiwoomGlobalTraderConsole.exe"
+    if console_path.exists():
+        return console_path
+    return Path(sys.executable)
+
+
+def _prepare_update_runner(app_dir: Path, temp_dir: Path) -> Path:
+    updater_exe = temp_dir / "KiwoomGlobalTraderUpdater.exe"
+    shutil.copy2(_find_update_runner(app_dir), updater_exe)
+    internal_dir = app_dir / "_internal"
+    if internal_dir.exists():
+        shutil.copytree(internal_dir, temp_dir / "_internal", dirs_exist_ok=True)
+    return updater_exe
 
 
 def hidden_update_subprocess_kwargs() -> dict[str, object]:
@@ -126,80 +138,128 @@ def maybe_auto_update(app_dir: Path, progress: Callable[[str], None] | None = No
         if not result.available or result.manifest is None:
             report(result.message)
             return False, result.message
-        message = (
-            f"{result.message} - 자동 적용은 보안 프로그램 차단을 피하기 위해 사용하지 않습니다. "
-            f"최신 ZIP을 받아 수동 교체하세요: {UPDATE_RELEASE_URL}"
-        )
-        report("새 버전이 있습니다. 콘솔 실행 후 로그의 다운로드 주소를 확인하세요.")
-        return False, message
+        report("새 버전이 있습니다. 자동 업데이트를 적용합니다...")
+        install_update_and_restart(app_dir, result.manifest)
+        return True, f"{result.message} - 자동 업데이트 적용 중입니다."
     except Exception as exc:
         return False, f"자동 업데이트 실패: {exc}"
 
 
+def apply_update_from_argv(argv: list[str]) -> int:
+    try:
+        pid = int(_arg_value(argv, "--update-pid"))
+        zip_path = Path(_arg_value(argv, "--update-zip"))
+        app_dir = Path(_arg_value(argv, "--update-app-dir"))
+        exe_path = Path(_arg_value(argv, "--update-exe"))
+        apply_update_and_restart(pid, zip_path, app_dir, exe_path)
+        return 0
+    except Exception as exc:
+        app_dir = _optional_path_arg(argv, "--update-app-dir") or Path.cwd()
+        _write_update_log(app_dir, f"update failed: {exc}")
+        return 1
+
+
+def apply_update_and_restart(pid: int, zip_path: Path, app_dir: Path, exe_path: Path) -> None:
+    _write_update_log(app_dir, f"waiting for pid {pid}")
+    _wait_for_process_exit(pid, timeout_sec=60)
+    time.sleep(1)
+
+    stage_dir = zip_path.parent / "stage"
+    if stage_dir.exists():
+        shutil.rmtree(stage_dir)
+    stage_dir.mkdir(parents=True, exist_ok=True)
+
+    _write_update_log(app_dir, "extracting update zip")
+    with zipfile.ZipFile(zip_path) as archive:
+        archive.extractall(stage_dir)
+
+    internal_dir = app_dir / "_internal"
+    if internal_dir.exists():
+        _write_update_log(app_dir, "removing old _internal")
+        shutil.rmtree(internal_dir)
+
+    preserve_names = {"data", "logs", "config.live.json", ".env", "credentials.json"}
+    for item in stage_dir.iterdir():
+        destination = app_dir / item.name
+        if item.name in preserve_names:
+            _write_update_log(app_dir, f"preserve user file/folder {item.name}")
+            continue
+        if item.is_dir():
+            if destination.exists():
+                shutil.rmtree(destination)
+            shutil.copytree(item, destination)
+        else:
+            shutil.copy2(item, destination)
+
+    if not list((app_dir / "_internal").glob("python*.dll")):
+        raise RuntimeError("updated _internal folder is missing python runtime dll")
+    if not exe_path.exists():
+        raise RuntimeError("updated console exe is missing")
+
+    _write_update_log(app_dir, "update installed; restarting console")
+    subprocess.Popen([str(exe_path)], cwd=str(app_dir), **hidden_update_subprocess_kwargs())
+
+
+def _arg_value(argv: list[str], name: str) -> str:
+    try:
+        index = argv.index(name)
+        return argv[index + 1]
+    except (ValueError, IndexError) as exc:
+        raise ValueError(f"missing required argument {name}") from exc
+
+
+def _optional_path_arg(argv: list[str], name: str) -> Path | None:
+    try:
+        return Path(_arg_value(argv, name))
+    except Exception:
+        return None
+
+
+def _wait_for_process_exit(pid: int, timeout_sec: int) -> None:
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        if not _process_exists(pid):
+            return
+        time.sleep(0.5)
+
+
+def _process_exists(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        result = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            **hidden_update_subprocess_kwargs(),
+        )
+        return str(pid) in result.stdout
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _write_update_log(app_dir: Path, message: str) -> None:
+    try:
+        log_dir = app_dir / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        with (log_dir / "update.log").open("a", encoding="utf-8") as file:
+            file.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {message}\n")
+    except Exception:
+        return
+
+
 def _update_script(pid: int, zip_path: Path, app_dir: Path, exe_path: Path) -> str:
-    return f"""
-$ErrorActionPreference = "Stop"
-$pidToWait = {pid}
-$zipPath = "{_ps_escape(zip_path)}"
-$appDir = "{_ps_escape(app_dir)}"
-$exePath = "{_ps_escape(exe_path)}"
-$stageDir = Join-Path (Split-Path -Parent $zipPath) "stage"
-$logDir = Join-Path $appDir "logs"
-$logPath = Join-Path $logDir "update.log"
-
-function Write-UpdateLog($message) {{
-    try {{
-        if (-not (Test-Path -LiteralPath $logDir)) {{
-            New-Item -ItemType Directory -Path $logDir | Out-Null
-        }}
-        Add-Content -LiteralPath $logPath -Encoding UTF8 -Value ("$(Get-Date -Format s) " + $message)
-    }} catch {{}}
-}}
-
-try {{
-    Write-UpdateLog "waiting for pid $pidToWait"
-    Wait-Process -Id $pidToWait -Timeout 60 -ErrorAction SilentlyContinue
-}} catch {{}}
-
-try {{
-    Start-Sleep -Seconds 1
-    Write-UpdateLog "extracting update zip"
-    if (Test-Path -LiteralPath $stageDir) {{
-        Remove-Item -LiteralPath $stageDir -Recurse -Force
-    }}
-    New-Item -ItemType Directory -Path $stageDir | Out-Null
-    Expand-Archive -LiteralPath $zipPath -DestinationPath $stageDir -Force
-
-    $internalDir = Join-Path $appDir "_internal"
-    if (Test-Path -LiteralPath $internalDir) {{
-        Write-UpdateLog "removing old _internal"
-        Remove-Item -LiteralPath $internalDir -Recurse -Force
-    }}
-
-    $preserveNames = @("data", "logs", "config.live.json", ".env", "credentials.json")
-    Get-ChildItem -LiteralPath $stageDir -Force | ForEach-Object {{
-        if ($preserveNames -contains $_.Name) {{
-            Write-UpdateLog ("preserve user file/folder " + $_.Name)
-        }} else {{
-            Copy-Item -LiteralPath $_.FullName -Destination $appDir -Recurse -Force
-        }}
-    }}
-
-    $runtimeDll = Get-ChildItem -Path (Join-Path $appDir "_internal\\python*.dll") -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($null -eq $runtimeDll) {{
-        throw "updated _internal folder is missing python runtime dll"
-    }}
-    if (-not (Test-Path -LiteralPath $exePath)) {{
-        throw "updated console exe is missing"
-    }}
-
-    Write-UpdateLog "update installed; restarting console"
-    Start-Process -FilePath $exePath -WorkingDirectory $appDir
-}} catch {{
-    Write-UpdateLog ("update failed: " + $_.Exception.Message)
-    throw
-}}
-"""
+    return (
+        "PowerShell updater is disabled. "
+        f"Use --apply-update --update-pid {pid} --update-zip {zip_path} "
+        f"--update-app-dir {app_dir} --update-exe {exe_path}."
+    )
 
 
 def _ps_escape(path: Path) -> str:
@@ -358,7 +418,5 @@ def _download_url(url: str, destination: Path) -> None:
             return
         except Exception as requests_exc:
             if isinstance(urllib_exc, urllib.error.HTTPError):
-                raise RuntimeError(
-                    f"업데이트 다운로드 실패: HTTP {urllib_exc.code}; requests={requests_exc}"
-                ) from requests_exc
+                raise RuntimeError(f"업데이트 다운로드 실패: HTTP {urllib_exc.code}; requests={requests_exc}") from requests_exc
             raise RuntimeError(f"업데이트 다운로드 실패: urllib={urllib_exc}; requests={requests_exc}") from requests_exc

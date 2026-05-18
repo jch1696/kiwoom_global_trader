@@ -4,6 +4,11 @@ import sys
 
 
 def main() -> None:
+    if "--apply-update" in sys.argv:
+        from src.updater import apply_update_from_argv
+
+        raise SystemExit(apply_update_from_argv(sys.argv[1:]))
+
     if "--cli" in sys.argv:
         sys.argv.remove("--cli")
         from src.main import main as cli_main
