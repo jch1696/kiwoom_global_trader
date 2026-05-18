@@ -519,7 +519,11 @@ def parse_live_order_result_line(line: str) -> tuple[str, str] | None:
     success, side, tier, price, qty, order_id, message = match.groups()
     status = "OK" if success == "True" else "ERROR"
     side_text = {"buy": "매수", "sell": "매도"}.get(side, side)
-    summary = f"실주문 {side_text} {price} x {qty} tier={tier}"
+    try:
+        price_text = f"{float(price):.2f}"
+    except ValueError:
+        price_text = price
+    summary = f"실주문 {side_text} {price_text} x {qty} tier={tier}"
     if order_id:
         summary += f" 주문번호={order_id}"
     if message:
@@ -1878,11 +1882,6 @@ def _run_tk_app(config_path: str) -> int:
                 self.seen_strategy_result = True
                 self.mark_sheet(target_sheet, status, message, self.current_action)
                 self.live_order_notification_sent = True
-                self.send_console_telegram(
-                    console_notification_text("live_order", target_sheet, status == "OK", message),
-                    order=status == "OK",
-                    failure=status != "OK",
-                )
             parsed = parse_strategy_result_line(line)
             if parsed is not None:
                 status, sheet_name, message = parsed

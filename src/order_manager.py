@@ -111,10 +111,13 @@ class OrderManager:
                 failed = True
 
         # 5. 유지한 주문이 없으면 더 가까운 목표 주문 하나만 접수한다.
+        placed_order: OrderRequest | None = None
         if target_order is not None and not keep_target and not failed:
             result.actions.append(f"place:{target_order.side.value}:{target_order.price}:{target_order.qty}")
             if not self._place(strategy, decision.current_tier, target_order):
                 failed = True
+            else:
+                placed_order = target_order
 
         if failed:
             result.success = False
@@ -126,6 +129,17 @@ class OrderManager:
                 result.message = "one or more order actions failed"
         else:
             self.fail_counts[strategy.sheet_name] = 0
+            if placed_order is not None and not self.trading_config.dry_run and self.notify_config.telegram_send_orders:
+                self._notify(
+                    self._live_order_summary_message(
+                        strategy,
+                        balance.current_price,
+                        decision.current_tier,
+                        decision.buy_order,
+                        decision.sell_order,
+                        placed_order,
+                    )
+                )
         return result
 
     def target_order_plan(
@@ -237,7 +251,7 @@ class OrderManager:
 
         notify_sent = False
         if result.success and self.notify_config.telegram_send_orders:
-            notify_sent = self._notify(self._order_message("[주문 접수]", strategy, current_tier, order, result.order_id or "")).sent
+            notify_sent = True
         elif not result.success and self.notify_config.telegram_send_failures:
             notify_sent = self._notify(f"[주문 실패]\n시트: {strategy.sheet_name}\n종목: {strategy.symbol}\n사유: {result.message}").sent
         self._log_order(strategy, current_tier, order, "place", "success" if result.success else "failed", result.message, notify_sent, result.order_id)
@@ -284,8 +298,6 @@ class OrderManager:
 
     def _cancel(self, strategy: Strategy, order: OpenOrder) -> bool:
         if self.trading_config.dry_run:
-            message = f"[취소 예정]\n시트: {strategy.sheet_name}\n계좌: {strategy.account_no}\n종목: {strategy.symbol}\n주문번호: {order.order_id}"
-            notify = self._notify(message) if self.notify_config.telegram_send_cancels else None
             self.logger.log_order(
                 {
                     "timestamp": datetime.now(),
@@ -301,7 +313,7 @@ class OrderManager:
                     "order_id": order.order_id,
                     "result": "success",
                     "message": "dry-run",
-                    "telegram_sent": notify.sent if notify else False,
+                    "telegram_sent": False,
                 }
             )
             return True
@@ -314,7 +326,6 @@ class OrderManager:
 
         notify_sent = False
         if result.success and self.notify_config.telegram_send_cancels:
-            notify_sent = self._notify(f"[주문 취소]\n시트: {strategy.sheet_name}\n종목: {strategy.symbol}\n주문번호: {order.order_id}").sent
             time.sleep(self.trading_config.post_cancel_confirm_wait_sec)
         elif not result.success and self.notify_config.telegram_send_failures:
             notify_sent = self._notify(f"[취소 실패]\n시트: {strategy.sheet_name}\n종목: {strategy.symbol}\n주문번호: {order.order_id}\n사유: {result.message}").sent
@@ -390,6 +401,25 @@ class OrderManager:
 
     def _notify(self, text: str):
         return self.notifier.send(text)
+
+    def _live_order_summary_message(
+        self,
+        strategy: Strategy,
+        current_price: float,
+        current_tier: int,
+        buy_order: OrderRequest | None,
+        sell_order: OrderRequest | None,
+        placed_order: OrderRequest,
+    ) -> str:
+        buy_count = 1 if placed_order.side == Side.BUY else 0
+        sell_count = 1 if placed_order.side == Side.SELL else 0
+        buy_price = f"{buy_order.price:.2f}" if buy_order is not None else "-"
+        sell_price = f"{sell_order.price:.2f}" if sell_order is not None else "-"
+        return (
+            f"{strategy.sheet_name} {current_tier}/{strategy.total_tiers}L (Buy {buy_count} / Sell {sell_count})\n"
+            f"{strategy.symbol} {current_price:.2f} ({buy_price} / {sell_price})\n"
+            f"status: ORDER 1/{self.trading_config.orders_per_side} OK"
+        )
 
     def _order_message(self, title: str, strategy: Strategy, current_tier: int, order: OrderRequest, order_id: str) -> str:
         return (

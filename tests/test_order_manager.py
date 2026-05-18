@@ -4,7 +4,7 @@ import unittest
 from datetime import datetime
 
 from src.config import NotifyConfig, TradingConfig
-from src.models import Balance, OpenOrder, OrderResult, Side, Strategy, Tier
+from src.models import Balance, CancelResult, OpenOrder, OrderResult, Side, Strategy, Tier
 from src.notifier import NullNotifier
 from src.order_manager import OrderManager
 from src.tier_engine import TierEngine
@@ -43,6 +43,7 @@ class FakeBroker:
 
     def cancel_order(self, account_no: str, order_id: str):
         self.cancelled.append(order_id)
+        return CancelResult(True, "cancelled")
 
     def place_order(self, order):
         return self.place_result or OrderResult(True, "TESTORDER", "accepted")
@@ -164,6 +165,83 @@ class OrderManagerTest(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(logger.orders[0]["action"], "dry_run_fill_order")
         self.assertEqual(logger.orders[0]["telegram_sent"], False)
+        self.assertEqual(notifier.messages, [])
+
+    def test_dry_run_cancel_does_not_send_cancel_planned_notification(self) -> None:
+        broker = FakeBroker(
+            [
+                OpenOrder(
+                    order_id="OLD",
+                    account_no="12345678",
+                    symbol="LABU",
+                    side=Side.BUY,
+                    price=160.13,
+                    original_qty=6,
+                    remaining_qty=6,
+                    status="accepted",
+                    submitted_at=None,
+                    fetched_at=datetime.now(),
+                )
+            ]
+        )
+        logger = FakeLogger()
+        notifier = RecordingNotifier()
+        trading = TradingConfig(dry_run=True)
+        notify = NotifyConfig(telegram_send_orders=True, telegram_send_cancels=True)
+        manager = OrderManager(broker, TierEngine(trading), trading, notify, logger, notifier)
+
+        result = manager.sync_strategy(_strategy())
+
+        self.assertTrue(result.success)
+        self.assertIn("dry_run_cancel", [row["action"] for row in logger.orders])
+        self.assertEqual(notifier.messages, [])
+
+    def test_live_order_sends_compact_summary_only(self) -> None:
+        broker = FakeBroker([], balance_qty=47, current_price=173.62)
+        logger = FakeLogger()
+        notifier = RecordingNotifier()
+        trading = TradingConfig(dry_run=False)
+        notify = NotifyConfig(telegram_send_orders=True, telegram_send_cancels=True)
+        manager = OrderManager(broker, TierEngine(trading), trading, notify, logger, notifier)
+
+        result = manager.sync_strategy(_strategy())
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            notifier.messages,
+            [
+                "LABU 9/55L (Buy 0 / Sell 1)\n"
+                "LABU 173.62 (160.13 / 178.70)\n"
+                "status: ORDER 1/1 OK"
+            ],
+        )
+
+    def test_live_cancel_success_does_not_send_cancel_notification(self) -> None:
+        broker = FakeBroker(
+            [
+                OpenOrder(
+                    order_id="OLD",
+                    account_no="12345678",
+                    symbol="LABU",
+                    side=Side.BUY,
+                    price=160.13,
+                    original_qty=6,
+                    remaining_qty=6,
+                    status="accepted",
+                    submitted_at=None,
+                    fetched_at=datetime.now(),
+                )
+            ]
+        )
+        logger = FakeLogger()
+        notifier = RecordingNotifier()
+        trading = TradingConfig(dry_run=False)
+        notify = NotifyConfig(telegram_send_orders=False, telegram_send_cancels=True)
+        manager = OrderManager(broker, TierEngine(trading), trading, notify, logger, notifier)
+
+        result = manager.sync_strategy(_strategy())
+
+        self.assertTrue(result.success)
         self.assertEqual(notifier.messages, [])
 
     def test_order_unavailable_day_halts_all_trading(self) -> None:

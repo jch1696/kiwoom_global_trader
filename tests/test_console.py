@@ -462,7 +462,7 @@ class ConsoleTest(unittest.TestCase):
         self.assertIsNotNone(parsed)
         status, message = parsed
         self.assertEqual(status, "OK")
-        self.assertIn("실주문 매도 195.7900 x 5", message)
+        self.assertIn("실주문 매도 195.79 x 5", message)
         self.assertIn("tier=6", message)
 
     def test_parse_live_order_result_line_accepts_order_id_underscore(self) -> None:
