@@ -14,6 +14,8 @@ from typing import Callable
 
 from .build_info import APP_VERSION, BUILD_COMMIT, UPDATE_OWNER, UPDATE_RELEASE_TAG, UPDATE_REPO, UPDATE_ZIP_ASSET
 
+UPDATE_RELEASE_URL = f"https://github.com/{UPDATE_OWNER}/{UPDATE_REPO}/releases/tag/{UPDATE_RELEASE_TAG}"
+
 
 @dataclass(frozen=True)
 class UpdateManifest:
@@ -124,10 +126,12 @@ def maybe_auto_update(app_dir: Path, progress: Callable[[str], None] | None = No
         if not result.available or result.manifest is None:
             report(result.message)
             return False, result.message
-        report("업데이트 다운로드 및 적용 준비 중...")
-        install_update_and_restart(app_dir, result.manifest)
-        report("업데이트 적용 중입니다. 잠시 후 콘솔을 다시 시작합니다.")
-        return True, result.message + " - 업데이트 후 다시 시작합니다"
+        message = (
+            f"{result.message} - 자동 적용은 보안 프로그램 차단을 피하기 위해 사용하지 않습니다. "
+            f"최신 ZIP을 받아 수동 교체하세요: {UPDATE_RELEASE_URL}"
+        )
+        report("새 버전이 있습니다. 콘솔 실행 후 로그의 다운로드 주소를 확인하세요.")
+        return False, message
     except Exception as exc:
         return False, f"자동 업데이트 실패: {exc}"
 

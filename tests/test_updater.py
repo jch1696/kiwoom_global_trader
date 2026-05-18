@@ -7,6 +7,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from src.updater import (
+    UPDATE_RELEASE_URL,
+    UpdateCheckResult,
     UpdateManifest,
     _download_asset_with_api,
     _download_url,
@@ -81,6 +83,23 @@ class UpdaterTest(unittest.TestCase):
         self.assertFalse(updated)
         self.assertIn("소스 실행 모드", message)
         self.assertEqual(messages, [])
+
+    def test_auto_update_reports_link_without_installing_when_update_exists(self) -> None:
+        messages: list[str] = []
+        manifest = UpdateManifest("auto-latest", "new1234", app_version="auto-20")
+
+        with (
+            patch("src.updater.sys.frozen", True, create=True),
+            patch("src.updater.check_for_update", return_value=UpdateCheckResult(True, "새 버전이 있습니다: auto-20 / new1234", manifest)),
+            patch("src.updater.install_update_and_restart") as install,
+        ):
+            updated, message = maybe_auto_update(Path("C:/App"), progress=messages.append)
+
+        self.assertFalse(updated)
+        self.assertIn(UPDATE_RELEASE_URL, message)
+        self.assertIn("수동 교체", message)
+        self.assertEqual(messages[-1], "새 버전이 있습니다. 콘솔 실행 후 로그의 다운로드 주소를 확인하세요.")
+        install.assert_not_called()
 
     def test_release_download_url_uses_direct_asset_url(self) -> None:
         self.assertEqual(
