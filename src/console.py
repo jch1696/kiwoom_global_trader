@@ -845,6 +845,33 @@ def latest_order_summaries(
     return summaries
 
 
+def latest_order_telegram_sent(
+    project_dir: str | Path,
+    sheet_name: str | None = None,
+    action: str = "place",
+) -> bool | None:
+    logs_dir = Path(project_dir) / "logs"
+    files = sorted(logs_dir.glob("orders_*.csv"), key=lambda path: path.stat().st_mtime, reverse=True)
+    rows: list[dict[str, str]] = []
+    for path in files[:3]:
+        try:
+            with path.open("r", encoding="utf-8-sig", newline="") as handle:
+                rows.extend(csv.DictReader(handle))
+        except OSError:
+            continue
+    if sheet_name:
+        rows = [row for row in rows if row.get("sheet_name") == sheet_name]
+    rows = [row for row in rows if row.get("action") == action]
+    if not rows:
+        return None
+    rows.sort(key=lambda row: row.get("timestamp", ""))
+    return str(rows[-1].get("telegram_sent", "")).strip().lower() == "true"
+
+
+def live_order_fallback_telegram_text(sheet_name: str, message: str) -> str:
+    return f"{sheet_name}\n{message}\nstatus: ORDER OK"
+
+
 def _format_command(command: list[str]) -> str:
     return " ".join(f'"{part}"' if " " in part else part for part in command)
 
@@ -1881,6 +1908,8 @@ def _run_tk_app(config_path: str) -> int:
                 target_sheet = self.current_running_sheet or self.current_sheet()
                 self.seen_strategy_result = True
                 self.mark_sheet(target_sheet, status, message, self.current_action)
+                if status == "OK" and not latest_order_telegram_sent(project_dir, target_sheet, "place"):
+                    self.send_console_telegram(live_order_fallback_telegram_text(target_sheet, message), order=True)
                 self.live_order_notification_sent = True
             parsed = parse_strategy_result_line(line)
             if parsed is not None:

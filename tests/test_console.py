@@ -17,6 +17,8 @@ from src.console import (
     ensure_config_file,
     extract_spreadsheet_id,
     latest_order_summaries,
+    latest_order_telegram_sent,
+    live_order_fallback_telegram_text,
     line_indicates_failure,
     line_indicates_hts_missing,
     live_unlock_status,
@@ -528,6 +530,29 @@ class ConsoleTest(unittest.TestCase):
         self.assertEqual(len(summaries), 1)
         self.assertIn("2026-05-11T21:07:20", summaries[0])
         self.assertIn("16.45 x 57", summaries[0])
+
+    def test_latest_order_telegram_sent_reads_latest_place_row(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            logs = Path(tmp) / "logs"
+            logs.mkdir()
+            (logs / "orders_20260519.csv").write_text(
+                "\n".join(
+                    [
+                        "timestamp,sheet_name,account_no,symbol,current_qty,current_tier,action,side,price,qty,order_id,result,message,telegram_sent",
+                        "2026-05-19T00:01:00,TQQQ50,123,TQQQ,,4,place,sell,75.69,16,,success,accepted,False",
+                        "2026-05-19T00:02:00,TQQQ50,123,TQQQ,,4,place,sell,75.69,16,,success,accepted,True",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            self.assertTrue(latest_order_telegram_sent(tmp, "TQQQ50", "place"))
+            self.assertIsNone(latest_order_telegram_sent(tmp, "BITU55", "place"))
+
+    def test_live_order_fallback_telegram_text_is_short(self) -> None:
+        text = live_order_fallback_telegram_text("BITU55", "실주문 매수 14.60 x 82 tier=5")
+
+        self.assertEqual(text, "BITU55\n실주문 매수 14.60 x 82 tier=5\nstatus: ORDER OK")
 
     def test_live_unlock_status_requires_all_safety_conditions(self) -> None:
         now = datetime(2026, 5, 9, 17, 10, 0)
