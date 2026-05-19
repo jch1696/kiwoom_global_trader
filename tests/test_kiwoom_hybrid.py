@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from src.brokers.kiwoom_hybrid import KiwoomHybridBroker
+from src.models import OrderRequest, Side
 
 
 class _Rect:
@@ -230,6 +231,75 @@ class KiwoomHybridBrokerParseTest(unittest.TestCase):
         self.assertEqual(result["removed"], "true")
         self.assertIn("no longer matches", result["message"])
 
+    def test_verify_order_created_treats_missing_open_order_as_unknown(self) -> None:
+        broker = KiwoomHybridBroker()
+        order = OrderRequest(
+            account_no="12345678",
+            symbol="LABU",
+            side=Side.SELL,
+            price=173.62,
+            qty=2,
+            order_type="limit",
+        )
+
+        with (
+            patch.object(broker, "_handle_order_rejected_popup", return_value=None),
+            patch.object(broker, "get_open_orders", return_value=[]),
+        ):
+            result = broker._verify_order_created(order)
+
+        self.assertEqual(result["created"], "unknown")
+        self.assertIn("filled immediately", result["message"])
+
+    def test_place_order_succeeds_when_confirmed_but_open_order_missing(self) -> None:
+        broker = KiwoomHybridBroker()
+        order = OrderRequest(
+            account_no="12345678",
+            symbol="LABU",
+            side=Side.SELL,
+            price=173.62,
+            qty=2,
+            order_type="limit",
+        )
+
+        window = Mock()
+        with (
+            patch.object(broker, "_handle_order_rejected_popup", return_value=None),
+            patch.object(broker, "_raise_if_order_unavailable_popup", return_value=None),
+            patch.object(broker, "reset_mini_order_window", return_value=window),
+            patch.object(broker, "_ensure_place_mode", return_value=None),
+            patch.object(
+                broker,
+                "_locate_place_form",
+                return_value={
+                    "account_edit": object(),
+                    "symbol_edit": object(),
+                    "order_type_edit": object(),
+                    "price_edit": object(),
+                    "qty_edit": object(),
+                    "buy_button": object(),
+                    "sell_button": object(),
+                },
+            ),
+            patch.object(broker, "_place_form_ready", return_value=True),
+            patch.object(broker, "_ensure_auto_qty_unchecked", return_value="already_unchecked"),
+            patch.object(broker, "_set_account_value", return_value=None),
+            patch.object(broker, "_set_edit_value", return_value=None),
+            patch.object(broker, "_verify_place_form_values", return_value=None),
+            patch.object(broker, "_click_order_button_attempts", return_value=iter(["mouse"])),
+            patch.object(broker, "_handle_place_confirmation", return_value={"found": "true", "clicked": "true", "message": "confirmed"}),
+            patch.object(
+                broker,
+                "_verify_order_created",
+                return_value={"created": "unknown", "message": "matching open order was not detected; order may have filled immediately"},
+            ),
+            patch.object(broker, "close_window_by_re", return_value=None),
+        ):
+            result = broker.place_order(order)
+
+        self.assertTrue(result.success)
+        self.assertIn("filled immediately", result.message)
+
     def test_find_auto_qty_checkbox_by_balance_auto_text(self) -> None:
         broker = KiwoomHybridBroker()
         button = _FakeButton("자동(잔고 100%)")
@@ -256,14 +326,16 @@ class KiwoomHybridBrokerParseTest(unittest.TestCase):
         self.assertEqual(status, "already_unchecked")
         self.assertFalse(button.clicked)
 
-    def test_click_order_button_prefers_control_click_input(self) -> None:
+    def test_click_order_button_prefers_mouse_coordinates(self) -> None:
         broker = KiwoomHybridBroker()
         button = _FakeButton("매수")
 
-        method = broker._click_order_button(button)
+        with patch("pywinauto.mouse.click") as click:
+            method = broker._click_order_button(button)
 
-        self.assertEqual(method, "click_input")
-        self.assertTrue(button.clicked)
+        self.assertEqual(method, "mouse")
+        click.assert_called_once()
+        self.assertFalse(button.clicked)
 
     def test_find_main_search_button_near_search_edit(self) -> None:
         broker = KiwoomHybridBroker()

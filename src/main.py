@@ -58,6 +58,8 @@ def main() -> None:
     config = original_config
     if args.only_sheet:
         config = _config_for_only_sheets(config, args.only_sheet)
+    if args.place_order or args.place_decision_order or args.cancel_order:
+        config = replace(config, trading=replace(config.trading, dry_run=False, dry_run_fill_order=False))
     if args.test_telegram:
         result = TelegramNotifier(config.notify).send("[텔레그램 테스트]\nKiwoom Global Trader 알림 연결 성공")
         print("Telegram test sent." if result.sent else f"Telegram test failed: {result.message}")

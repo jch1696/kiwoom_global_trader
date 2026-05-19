@@ -286,12 +286,12 @@ class OrderManagerTest(unittest.TestCase):
 
         self.assertTrue(result.success)
         self.assertEqual(result.current_tier, 9)
-        self.assertEqual(result.actions, ["rebalance:buy:45->47", "place:buy:165.08:2"])
+        self.assertEqual(result.actions, ["rebalance:buy:45->47", "place:buy:160.0:2"])
         self.assertIsNotNone(result.placed_order)
         assert result.placed_order is not None
         self.assertEqual(result.placed_order.qty, 2)
         self.assertEqual(logger.orders[0]["side"], "buy")
-        self.assertEqual(logger.orders[0]["price"], 165.08)
+        self.assertEqual(logger.orders[0]["price"], 160.0)
         self.assertEqual(logger.orders[0]["qty"], 2)
 
     def test_rebalance_cancels_existing_order_then_places_gap_order(self) -> None:
@@ -321,7 +321,7 @@ class OrderManagerTest(unittest.TestCase):
         result = manager.sync_strategy(_strategy())
 
         self.assertTrue(result.success)
-        self.assertEqual(result.actions, ["rebalance:buy:45->47", "cancel:sell:OLD", "place:buy:165.08:2"])
+        self.assertEqual(result.actions, ["rebalance:buy:45->47", "cancel:sell:OLD", "place:buy:160.0:2"])
         self.assertEqual(broker.cancelled, [])
         self.assertEqual(logger.orders[0]["action"], "dry_run_cancel")
         self.assertEqual(logger.orders[1]["action"], "dry_run_place")
@@ -337,10 +337,23 @@ class OrderManagerTest(unittest.TestCase):
 
         self.assertTrue(result.success)
         self.assertEqual(result.current_tier, 9)
-        self.assertEqual(result.actions, ["rebalance:sell:45->41", "place:sell:178.7:4"])
+        self.assertEqual(result.actions, ["rebalance:sell:45->41", "place:sell:173.62:4"])
         self.assertEqual(logger.orders[0]["side"], "sell")
-        self.assertEqual(logger.orders[0]["price"], 178.70)
+        self.assertEqual(logger.orders[0]["price"], 173.62)
         self.assertEqual(logger.orders[0]["qty"], 4)
+
+    def test_rebalance_falls_back_to_tier_price_when_current_price_is_missing(self) -> None:
+        broker = FakeBroker([], balance_qty=45, current_price=0.0)
+        logger = FakeLogger()
+        trading = TradingConfig(dry_run=True, rebalance_enabled=True)
+        notify = NotifyConfig(telegram_send_orders=False, telegram_send_cancels=False)
+        manager = OrderManager(broker, TierEngine(trading), trading, notify, logger, NullNotifier())
+
+        result = manager.sync_strategy(_strategy())
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.actions, ["rebalance:buy:45->47", "place:buy:165.08:2"])
+        self.assertEqual(logger.orders[0]["price"], 165.08)
 
 
 def _strategy() -> Strategy:

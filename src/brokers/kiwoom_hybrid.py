@@ -283,14 +283,20 @@ class KiwoomHybridBroker(BrokerAdapter):
         if action_button is None:
             return OrderResult(False, None, f"{button_label} button was not found")
 
-        click_method = self._click_order_button(action_button)
-        if not click_method:
+        popup_result = {"found": "false", "clicked": "false", "message": "order confirmation dialog was not detected"}
+        click_methods: list[str] = []
+        for click_method in self._click_order_button_attempts(action_button):
+            click_methods.append(click_method)
+            time.sleep(0.2)
+            popup_result = self._handle_place_confirmation(confirm=True)
+            if popup_result["found"] == "true":
+                break
+        click_method_text = ",".join(click_methods) or "-"
+        if not click_methods:
             return OrderResult(False, None, f"failed to click {button_label} button")
-        time.sleep(0.2)
 
-        popup_result = self._handle_place_confirmation(confirm=True)
         if popup_result["found"] != "true":
-            return OrderResult(False, None, f"clicked {button_label} button via {click_method}; {popup_result['message']}")
+            return OrderResult(False, None, f"clicked {button_label} button via {click_method_text}; {popup_result['message']}")
         if popup_result["clicked"] != "true":
             return OrderResult(False, None, popup_result["message"])
 
@@ -299,12 +305,18 @@ class KiwoomHybridBroker(BrokerAdapter):
             return OrderResult(
                 True,
                 verification.get("order_id") or None,
-                f"clicked {button_label} button via {click_method}, confirmed popup, and detected order in open orders",
+                f"clicked {button_label} button via {click_method_text}, confirmed popup, and detected order in open orders",
+            )
+        if verification["created"] == "unknown":
+            return OrderResult(
+                True,
+                None,
+                f"clicked {button_label} button via {click_method_text} and confirmed popup; {verification['message']}",
             )
         return OrderResult(
             False,
             None,
-            f"clicked {button_label} button via {click_method} and confirmed popup, but order was not accepted: {verification['message']}",
+            f"clicked {button_label} button via {click_method_text} and confirmed popup, but order was not accepted: {verification['message']}",
         )
 
     def close_window_by_re(self, window_re: str) -> None:
@@ -2396,13 +2408,21 @@ class KiwoomHybridBroker(BrokerAdapter):
             return False
 
     def _click_order_button(self, control: Any) -> str:
+        if self._click_control_center(control):
+            return "mouse"
         if self._click_control_input(control):
             return "click_input"
         if self._click_control_by_message(control):
             return "bm_click"
-        if self._click_control_center(control):
-            return "mouse"
         return ""
+
+    def _click_order_button_attempts(self, control: Any):
+        if self._click_control_center(control):
+            yield "mouse"
+        if self._click_control_input(control):
+            yield "click_input"
+        if self._click_control_by_message(control):
+            yield "bm_click"
 
     @staticmethod
     def _click_control_input(control: Any) -> bool:
@@ -2549,9 +2569,9 @@ class KiwoomHybridBroker(BrokerAdapter):
             for open_order in open_orders:
                 if self._matches_created_order(order, open_order):
                     return {"created": "true", "order_id": open_order.order_id, "message": "matching open order detected"}
-            last_message = "matching open order was not detected"
+            last_message = "matching open order was not detected; order may have filled immediately"
             time.sleep(self.POST_PLACE_RETRY_DELAY_SEC)
-        return {"created": "false", "message": last_message}
+        return {"created": "unknown", "message": last_message}
 
     @staticmethod
     def _matches_created_order(order: OrderRequest, open_order: OpenOrder) -> bool:

@@ -186,9 +186,9 @@ class OrderManager:
             return TargetOrderPlan(None, action, "rebalance buy needed but buy is blocked")
         if side == Side.SELL and strategy.sell_blocked:
             return TargetOrderPlan(None, action, "rebalance sell needed but sell is blocked")
-        price = price_tier.buy_price if side == Side.BUY else price_tier.sell_price
+        price = balance.current_price
         if price <= 0:
-            price = balance.current_price
+            price = price_tier.buy_price if side == Side.BUY else price_tier.sell_price
         if price <= 0:
             return TargetOrderPlan(None, action, "rebalance needed but no usable price")
         return TargetOrderPlan(
