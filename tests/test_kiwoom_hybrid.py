@@ -256,6 +256,15 @@ class KiwoomHybridBrokerParseTest(unittest.TestCase):
         self.assertEqual(status, "already_unchecked")
         self.assertFalse(button.clicked)
 
+    def test_click_order_button_prefers_control_click_input(self) -> None:
+        broker = KiwoomHybridBroker()
+        button = _FakeButton("매수")
+
+        method = broker._click_order_button(button)
+
+        self.assertEqual(method, "click_input")
+        self.assertTrue(button.clicked)
+
     def test_find_main_search_button_near_search_edit(self) -> None:
         broker = KiwoomHybridBroker()
         search_edit = _FakeEdit(_RectValue(100, 10, 140, 24))

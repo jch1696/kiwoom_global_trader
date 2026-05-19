@@ -338,7 +338,8 @@ def main() -> None:
             f"PLACE_DECISION_ORDER success={placed_success} "
             f"side={placed_order.side.value} tier={placed_order.tier_no or ''} "
             f"price={placed_order.price:.4f} qty={placed_order.qty} "
-            f"order_id= message=actions={','.join(result.actions)} {result.message}"
+            f"order_id={result.placed_order_id} "
+            f"message={result.placed_message or result.message} actions={','.join(result.actions)}"
         )
         return
     if args.cancel_order:

@@ -26,6 +26,8 @@ class StrategySyncResult:
     current_tier: int | None = None
     actions: list[str] = field(default_factory=list)
     placed_order: OrderRequest | None = None
+    placed_order_id: str = ""
+    placed_message: str = ""
 
 
 @dataclass(frozen=True)
@@ -129,7 +131,10 @@ class OrderManager:
                 decision.sell_order,
                 target_order,
             )
-            if self._place(strategy, decision.current_tier, target_order, notify_message=notify_message):
+            placed_result = self._place(strategy, decision.current_tier, target_order, notify_message=notify_message)
+            result.placed_order_id = placed_result.order_id or ""
+            result.placed_message = placed_result.message
+            if placed_result.success:
                 result.placed_order = target_order
             else:
                 failed = True
@@ -245,18 +250,19 @@ class OrderManager:
             return upper, upper
         return (lower, upper) if sell_gap <= buy_gap else (upper, upper)
 
-    def _place(self, strategy: Strategy, current_tier: int, order: OrderRequest, notify_message: str = "") -> bool:
+    def _place(self, strategy: Strategy, current_tier: int, order: OrderRequest, notify_message: str = "") -> OrderResult:
         if self.trading_config.dry_run:
             if self.trading_config.dry_run_fill_order:
-                return self._fill_order_form_for_dry_run(strategy, current_tier, order)
+                ok = self._fill_order_form_for_dry_run(strategy, current_tier, order)
+                return OrderResult(ok, None, "dry-run fill order form" if ok else "dry-run fill order form failed")
             self._log_order(strategy, current_tier, order, "dry_run_place", "success", "dry-run", False)
-            return True
+            return OrderResult(True, None, "dry-run")
 
         try:
             result = self._retry(lambda: self.broker.place_order(order), "place_order")
         except Exception as exc:
             self._record_failure(strategy, "주문 실패", exc)
-            return False
+            return OrderResult(False, None, str(exc))
 
         notify_sent = False
         if result.success and self.notify_config.telegram_send_orders:
@@ -266,7 +272,7 @@ class OrderManager:
         self._log_order(strategy, current_tier, order, "place", "success" if result.success else "failed", result.message, notify_sent, result.order_id)
         if not result.success and self._is_order_unavailable_message(result.message):
             self.last_halt_reason = result.message
-        return result.success
+        return result
 
     def _fill_order_form_for_dry_run(self, strategy: Strategy, current_tier: int, order: OrderRequest) -> bool:
         if not hasattr(self.broker, "probe_place_order"):
