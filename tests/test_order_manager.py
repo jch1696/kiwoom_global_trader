@@ -122,6 +122,22 @@ class OrderManagerTest(unittest.TestCase):
         self.assertEqual(logger.orders[0]["action"], "dry_run_place")
         self.assertEqual(logger.orders[0]["side"], "sell")
 
+    def test_preferred_side_places_validated_side_instead_of_recalculating_nearest(self) -> None:
+        broker = FakeBroker([], current_price=173.62)
+        logger = FakeLogger()
+        trading = TradingConfig(dry_run=True)
+        notify = NotifyConfig(telegram_send_orders=False, telegram_send_cancels=False)
+        manager = OrderManager(broker, TierEngine(trading), trading, notify, logger, NullNotifier())
+
+        result = manager.sync_strategy(_strategy(), preferred_side=Side.BUY)
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.actions, ["place:buy:160.13:6"])
+        self.assertIsNotNone(result.placed_order)
+        assert result.placed_order is not None
+        self.assertEqual(result.placed_order.side, Side.BUY)
+        self.assertEqual(logger.orders[0]["side"], "buy")
+
     def test_dry_run_fill_order_populates_order_form_probe(self) -> None:
         broker = FakeBroker([])
         logger = FakeLogger()
@@ -271,6 +287,9 @@ class OrderManagerTest(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(result.current_tier, 9)
         self.assertEqual(result.actions, ["rebalance:buy:45->47", "place:buy:165.08:2"])
+        self.assertIsNotNone(result.placed_order)
+        assert result.placed_order is not None
+        self.assertEqual(result.placed_order.qty, 2)
         self.assertEqual(logger.orders[0]["side"], "buy")
         self.assertEqual(logger.orders[0]["price"], 165.08)
         self.assertEqual(logger.orders[0]["qty"], 2)

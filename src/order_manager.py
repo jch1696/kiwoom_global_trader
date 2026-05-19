@@ -25,6 +25,7 @@ class StrategySyncResult:
     message: str = ""
     current_tier: int | None = None
     actions: list[str] = field(default_factory=list)
+    placed_order: OrderRequest | None = None
 
 
 @dataclass(frozen=True)
@@ -53,7 +54,7 @@ class OrderManager:
         self.fail_counts: dict[str, int] = {}
         self.last_halt_reason: str | None = None
 
-    def sync_strategy(self, strategy: Strategy) -> StrategySyncResult:
+    def sync_strategy(self, strategy: Strategy, preferred_side: Side | None = None) -> StrategySyncResult:
         self.last_halt_reason = None
         if hasattr(self.broker, "reset_trading_windows"):
             try:
@@ -75,7 +76,14 @@ class OrderManager:
             success=True,
             current_tier=decision.current_tier,
         )
-        plan = self.target_order_plan(strategy, balance, decision.current_tier, decision.buy_order, decision.sell_order)
+        plan = self.target_order_plan(
+            strategy,
+            balance,
+            decision.current_tier,
+            decision.buy_order,
+            decision.sell_order,
+            preferred_side=preferred_side,
+        )
         if plan.action:
             result.actions.append(plan.action)
         if plan.block_reason:
@@ -121,7 +129,9 @@ class OrderManager:
                 decision.sell_order,
                 target_order,
             )
-            if not self._place(strategy, decision.current_tier, target_order, notify_message=notify_message):
+            if self._place(strategy, decision.current_tier, target_order, notify_message=notify_message):
+                result.placed_order = target_order
+            else:
                 failed = True
 
         if failed:
@@ -143,10 +153,15 @@ class OrderManager:
         current_tier: int,
         buy_order: OrderRequest | None,
         sell_order: OrderRequest | None,
+        preferred_side: Side | None = None,
     ) -> TargetOrderPlan:
         rebalance = self._rebalance_order(strategy, balance, current_tier)
         if rebalance.block_reason or rebalance.order is not None:
             return rebalance
+        if preferred_side == Side.BUY:
+            return TargetOrderPlan(buy_order)
+        if preferred_side == Side.SELL:
+            return TargetOrderPlan(sell_order)
         return TargetOrderPlan(self._nearest_order(balance.current_price, buy_order, sell_order))
 
     def _rebalance_order(self, strategy: Strategy, balance, current_tier: int) -> TargetOrderPlan:

@@ -331,11 +331,13 @@ def main() -> None:
         return
     if args.place_decision_order:
         strategy, order = _resolve_nearest_decision_order(scheduler, args.only_sheet, args.place_decision_order)
-        result = scheduler.order_manager.sync_strategy(strategy)
+        result = scheduler.order_manager.sync_strategy(strategy, preferred_side=Side(args.place_decision_order))
+        placed_order = result.placed_order or order
+        placed_success = result.success and not result.skipped and result.placed_order is not None
         print(
-            f"PLACE_DECISION_ORDER success={result.success and not result.skipped} "
-            f"side={order.side.value} tier={order.tier_no or ''} "
-            f"price={order.price:.4f} qty={order.qty} "
+            f"PLACE_DECISION_ORDER success={placed_success} "
+            f"side={placed_order.side.value} tier={placed_order.tier_no or ''} "
+            f"price={placed_order.price:.4f} qty={placed_order.qty} "
             f"order_id= message=actions={','.join(result.actions)} {result.message}"
         )
         return
