@@ -17,6 +17,10 @@
 - Verification:
   - `python -m pytest` passed with `134 passed, 1 skipped`.
   - User confirmed the live order test succeeded.
+- Follow-up:
+  - ETHT showed `ORDER OK` while open-order verification had actually failed with `HTS main window is not open`.
+  - Tightened post-order verification so "missing from open orders" is treated as immediate-fill possibility only after open-order reading succeeds at least once.
+  - If open-order reading never succeeds, the order is reported as failed instead of success.
 
 ### Notes
 

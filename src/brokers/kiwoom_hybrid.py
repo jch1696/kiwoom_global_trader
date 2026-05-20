@@ -2556,6 +2556,8 @@ class KiwoomHybridBroker(BrokerAdapter):
         return {"removed": "false", "message": last_message}
 
     def _verify_order_created(self, order: OrderRequest) -> dict[str, str]:
+        read_succeeded = False
+        last_message = "post-order verification unavailable"
         for _ in range(self.POST_PLACE_RETRY_COUNT):
             rejected = self._handle_order_rejected_popup()
             if rejected is not None:
@@ -2566,11 +2568,14 @@ class KiwoomHybridBroker(BrokerAdapter):
                 last_message = f"re-open-order read failed: {exc}"
                 time.sleep(self.POST_PLACE_RETRY_DELAY_SEC)
                 continue
+            read_succeeded = True
             for open_order in open_orders:
                 if self._matches_created_order(order, open_order):
                     return {"created": "true", "order_id": open_order.order_id, "message": "matching open order detected"}
             last_message = "matching open order was not detected; order may have filled immediately"
             time.sleep(self.POST_PLACE_RETRY_DELAY_SEC)
+        if not read_succeeded:
+            return {"created": "false", "message": last_message}
         return {"created": "unknown", "message": last_message}
 
     @staticmethod

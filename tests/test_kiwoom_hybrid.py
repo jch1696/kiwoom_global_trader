@@ -251,6 +251,26 @@ class KiwoomHybridBrokerParseTest(unittest.TestCase):
         self.assertEqual(result["created"], "unknown")
         self.assertIn("filled immediately", result["message"])
 
+    def test_verify_order_created_fails_when_open_order_read_never_succeeds(self) -> None:
+        broker = KiwoomHybridBroker()
+        order = OrderRequest(
+            account_no="12345678",
+            symbol="LABU",
+            side=Side.SELL,
+            price=173.62,
+            qty=2,
+            order_type="limit",
+        )
+
+        with (
+            patch.object(broker, "_handle_order_rejected_popup", return_value=None),
+            patch.object(broker, "get_open_orders", side_effect=RuntimeError("HTS main window is not open")),
+        ):
+            result = broker._verify_order_created(order)
+
+        self.assertEqual(result["created"], "false")
+        self.assertIn("HTS main window is not open", result["message"])
+
     def test_place_order_succeeds_when_confirmed_but_open_order_missing(self) -> None:
         broker = KiwoomHybridBroker()
         order = OrderRequest(
