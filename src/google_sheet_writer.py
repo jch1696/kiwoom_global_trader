@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from collections import defaultdict
 from typing import Iterable
@@ -66,6 +68,72 @@ def build_google_settlement_writer(config: GoogleConfig, base_dir: str | Path) -
         credential_path=credential_path,
         sheet_name=config.settlement_sheet_name,
     )
+
+
+def build_google_program_info_writer(config: GoogleConfig, base_dir: str | Path) -> GoogleProgramInfoWriter | None:
+    spreadsheet_id = resolve_spreadsheet_id(config)
+    if not spreadsheet_id:
+        return None
+
+    credential_path = Path(config.credential_file)
+    if not credential_path.is_absolute():
+        credential_path = Path(base_dir) / credential_path
+    if not credential_path.exists():
+        return None
+
+    return GoogleProgramInfoWriter(spreadsheet_id=spreadsheet_id, credential_path=credential_path)
+
+
+@dataclass(frozen=True)
+class ProgramInfoUpdate:
+    updated_at: datetime
+    current_tier: int
+    current_price: float
+    balance_qty: int
+    qty_gap: int
+    buy_open_count: int
+    sell_open_count: int
+
+
+class GoogleProgramInfoWriter:
+    def __init__(self, spreadsheet_id: str, credential_path: str | Path) -> None:
+        self.spreadsheet_id = spreadsheet_id
+        self.credential_path = Path(credential_path)
+        self._service = None
+
+    def update_program_info(self, sheet_name: str, update: ProgramInfoUpdate) -> None:
+        service = self._get_service()
+        cells = {
+            "K6": update.updated_at.strftime("%m-%d %H:%M:%S"),
+            "K8": update.current_tier,
+            "K10": round(update.current_price, 4),
+            "K12": update.balance_qty,
+            "K14": update.qty_gap,
+            "K16": update.buy_open_count,
+            "K18": update.sell_open_count,
+        }
+        service.spreadsheets().values().batchUpdate(
+            spreadsheetId=self.spreadsheet_id,
+            body={
+                "valueInputOption": "USER_ENTERED",
+                "data": [
+                    {"range": f"{_quote_sheet_name(sheet_name)}!{cell}", "values": [[value]]}
+                    for cell, value in cells.items()
+                ],
+            },
+        ).execute()
+
+    def _get_service(self):
+        if self._service is not None:
+            return self._service
+
+        from google.oauth2.service_account import Credentials
+        from googleapiclient.discovery import build
+
+        scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+        credentials = Credentials.from_service_account_file(str(self.credential_path), scopes=scopes)
+        self._service = build("sheets", "v4", credentials=credentials, cache_discovery=False)
+        return self._service
 
 
 class GoogleSettlementSheetWriter:

@@ -2,9 +2,16 @@
 
 import unittest
 from datetime import datetime
+from unittest.mock import Mock
 
 from src.config import GoogleConfig
-from src.google_sheet_writer import extract_spreadsheet_id, resolve_spreadsheet_id, settlement_record_to_row
+from src.google_sheet_writer import (
+    GoogleProgramInfoWriter,
+    ProgramInfoUpdate,
+    extract_spreadsheet_id,
+    resolve_spreadsheet_id,
+    settlement_record_to_row,
+)
 from src.models import SettlementRecord
 
 
@@ -42,6 +49,36 @@ class GoogleSheetWriterTest(unittest.TestCase):
         self.assertEqual(row[:5], ["2026-05-10 07:10:00", "05-09", "LABU55", "LABU", 6])
         self.assertEqual(row[-1], "1")
         self.assertEqual(len(row), 17)
+
+    def test_program_info_writer_updates_template_cells(self) -> None:
+        writer = GoogleProgramInfoWriter("sheet-id", "credentials.json")
+        request = Mock()
+        service = Mock()
+        service.spreadsheets.return_value.values.return_value.batchUpdate.return_value = request
+        writer._service = service
+
+        writer.update_program_info(
+            "ETHT55",
+            ProgramInfoUpdate(
+                updated_at=datetime(2026, 5, 20, 22, 31, 5),
+                current_tier=9,
+                current_price=14.72,
+                balance_qty=617,
+                qty_gap=2,
+                buy_open_count=0,
+                sell_open_count=1,
+            ),
+        )
+
+        kwargs = service.spreadsheets.return_value.values.return_value.batchUpdate.call_args.kwargs
+        data = {item["range"]: item["values"][0][0] for item in kwargs["body"]["data"]}
+        self.assertEqual(data["'ETHT55'!K6"], "05-20 22:31:05")
+        self.assertEqual(data["'ETHT55'!K8"], 9)
+        self.assertEqual(data["'ETHT55'!K10"], 14.72)
+        self.assertEqual(data["'ETHT55'!K12"], 617)
+        self.assertEqual(data["'ETHT55'!K14"], 2)
+        self.assertEqual(data["'ETHT55'!K16"], 0)
+        self.assertEqual(data["'ETHT55'!K18"], 1)
 
 
 if __name__ == "__main__":

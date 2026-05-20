@@ -74,6 +74,14 @@ class RecordingNotifier:
         return type("NotifyResult", (), {"sent": True, "message": "ok"})()
 
 
+class RecordingProgramInfoWriter:
+    def __init__(self) -> None:
+        self.updates: list[tuple[str, object]] = []
+
+    def update_program_info(self, sheet_name: str, update) -> None:
+        self.updates.append((sheet_name, update))
+
+
 class OrderManagerTest(unittest.TestCase):
     def test_keeps_matching_nearest_open_order_without_placing_other_side(self) -> None:
         broker = FakeBroker(
@@ -121,6 +129,39 @@ class OrderManagerTest(unittest.TestCase):
         self.assertEqual(len(logger.orders), 1)
         self.assertEqual(logger.orders[0]["action"], "dry_run_place")
         self.assertEqual(logger.orders[0]["side"], "sell")
+
+    def test_updates_program_info_from_live_balance_and_open_orders(self) -> None:
+        broker = FakeBroker(
+            [
+                OpenOrder(
+                    order_id="SELL1",
+                    account_no="12345678",
+                    symbol="LABU",
+                    side=Side.SELL,
+                    price=178.70,
+                    original_qty=6,
+                    remaining_qty=6,
+                    status="accepted",
+                    submitted_at=None,
+                    fetched_at=datetime.now(),
+                )
+            ],
+            balance_qty=617,
+            current_price=14.72,
+        )
+        logger = FakeLogger()
+        writer = RecordingProgramInfoWriter()
+        trading = TradingConfig(dry_run=True)
+        notify = NotifyConfig(telegram_send_orders=False, telegram_send_cancels=False)
+        manager = OrderManager(broker, TierEngine(trading), trading, notify, logger, NullNotifier(), writer)
+
+        manager.sync_strategy(_strategy())
+
+        self.assertEqual(writer.updates[0][0], "LABU")
+        update = writer.updates[0][1]
+        self.assertEqual(update.balance_qty, 617)
+        self.assertEqual(update.current_price, 14.72)
+        self.assertEqual(update.sell_open_count, 1)
 
     def test_preferred_side_places_validated_side_instead_of_recalculating_nearest(self) -> None:
         broker = FakeBroker([], current_price=173.62)

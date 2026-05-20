@@ -3,11 +3,12 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Callable, TypeVar
+from typing import Callable, Protocol, TypeVar
 
 from .brokers.base import BrokerAdapter
 from .config import NotifyConfig, TradingConfig
 from .csv_logger import CsvLogger
+from .google_sheet_writer import ProgramInfoUpdate
 from .models import OpenOrder, OrderRequest, OrderResult, Side, Strategy, Tier
 from .notifier import NullNotifier, TelegramNotifier
 from .tier_engine import TierEngine
@@ -37,6 +38,11 @@ class TargetOrderPlan:
     block_reason: str = ""
 
 
+class ProgramInfoWriter(Protocol):
+    def update_program_info(self, sheet_name: str, update: ProgramInfoUpdate) -> None:
+        ...
+
+
 class OrderManager:
     def __init__(
         self,
@@ -46,6 +52,7 @@ class OrderManager:
         notify_config: NotifyConfig,
         logger: CsvLogger,
         notifier: TelegramNotifier | NullNotifier,
+        program_info_writer: ProgramInfoWriter | None = None,
     ) -> None:
         self.broker = broker
         self.tier_engine = tier_engine
@@ -53,6 +60,7 @@ class OrderManager:
         self.notify_config = notify_config
         self.logger = logger
         self.notifier = notifier
+        self.program_info_writer = program_info_writer
         self.fail_counts: dict[str, int] = {}
         self.last_halt_reason: str | None = None
 
@@ -102,6 +110,7 @@ class OrderManager:
             return self._failure_result(strategy, exc)
 
         target_order = plan.order
+        self._update_program_info(strategy, balance, decision.current_tier, open_orders)
 
         # 4. 한 번에 하나의 주문만 관리한다.
         # 현재가에서 더 가까운 목표 주문과 같은 미체결은 유지하고, 나머지는 취소한다.
@@ -391,6 +400,40 @@ class OrderManager:
         if not candidates:
             return None
         return min(candidates, key=lambda order: abs(order.price - current_price))
+
+    def _update_program_info(self, strategy: Strategy, balance, current_tier: int, open_orders: list[OpenOrder]) -> None:
+        if self.program_info_writer is None:
+            return
+        try:
+            current_tier_target = self.tier_engine._tier_by_no(strategy.tiers, current_tier)
+            qty_gap = balance.qty - current_tier_target.target_qty if current_tier_target is not None else 0
+            self.program_info_writer.update_program_info(
+                strategy.sheet_name,
+                ProgramInfoUpdate(
+                    updated_at=datetime.now(),
+                    current_tier=current_tier,
+                    current_price=balance.current_price,
+                    balance_qty=balance.qty,
+                    qty_gap=qty_gap,
+                    buy_open_count=sum(1 for order in open_orders if order.side == Side.BUY),
+                    sell_open_count=sum(1 for order in open_orders if order.side == Side.SELL),
+                ),
+            )
+        except Exception as exc:
+            self.logger.log_error(
+                {
+                    "timestamp": datetime.now(),
+                    "module": "program_info_sheet",
+                    "account_no": strategy.account_no,
+                    "symbol": strategy.symbol,
+                    "error_type": "program_info_update_failed",
+                    "error_message": str(exc),
+                    "traceback": "",
+                    "retry_count": "",
+                    "strategy_disabled": False,
+                    "telegram_sent": False,
+                }
+            )
 
     def _record_failure(self, strategy: Strategy, label: str, exc: Exception, disable: bool = False) -> None:
         count = self.fail_counts.get(strategy.sheet_name, 0) + 1

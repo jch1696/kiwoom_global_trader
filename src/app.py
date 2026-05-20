@@ -7,7 +7,7 @@ from .brokers.kiwoom_hybrid import KiwoomHybridBroker
 from .brokers.simulated import SimulatedBroker
 from .config import AppConfig
 from .csv_logger import CsvLogger
-from .google_sheet_writer import build_google_settlement_writer
+from .google_sheet_writer import build_google_program_info_writer, build_google_settlement_writer
 from .models import OpenOrder
 from .notifier import NullNotifier, TelegramNotifier
 from .order_manager import OrderManager
@@ -40,7 +40,8 @@ def build_scheduler(
         else KiwoomHybridBroker(config.broker.account_dropdown_order)
     )
     tier_engine = TierEngine(config.trading)
-    order_manager = OrderManager(broker, tier_engine, config.trading, config.notify, logger, notifier)
+    program_info_writer = build_google_program_info_writer(config.google, base_dir)
+    order_manager = OrderManager(broker, tier_engine, config.trading, config.notify, logger, notifier, program_info_writer)
     if config.google.public_csv_tabs:
         sheet_reader = PublicCsvSheetReader(config.google)
     elif config.google.public_xlsx_url:

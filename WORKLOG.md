@@ -21,6 +21,10 @@
   - ETHT showed `ORDER OK` while open-order verification had actually failed with `HTS main window is not open`.
   - Tightened post-order verification so "missing from open orders" is treated as immediate-fill possibility only after open-order reading succeeds at least once.
   - If open-order reading never succeeds, the order is reported as failed instead of success.
+- Follow-up:
+  - Added automatic Google Sheet updates for the order sheet "program trade info" area.
+  - After HTS balance/open-order reads, the app writes latest update time, current tier, current price, HTS balance quantity, tier quantity gap, buy open-order count, and sell open-order count to `K6`, `K8`, `K10`, `K12`, `K14`, `K16`, and `K18`.
+  - This uses the same service-account credential as settlement sheet writing. If the credential file is missing or the service account is not shared as an editor, the app logs the write failure and continues trading.
 
 ### Notes
 
