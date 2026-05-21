@@ -72,13 +72,13 @@ class GoogleSheetWriterTest(unittest.TestCase):
 
         kwargs = service.spreadsheets.return_value.values.return_value.batchUpdate.call_args.kwargs
         data = {item["range"]: item["values"][0][0] for item in kwargs["body"]["data"]}
-        self.assertEqual(data["'ETHT55'!K6"], "05-20 22:31:05")
-        self.assertEqual(data["'ETHT55'!K8"], 9)
-        self.assertEqual(data["'ETHT55'!K10"], 14.72)
-        self.assertEqual(data["'ETHT55'!K12"], 617)
-        self.assertEqual(data["'ETHT55'!K14"], 2)
-        self.assertEqual(data["'ETHT55'!K16"], 0)
-        self.assertEqual(data["'ETHT55'!K18"], 1)
+        self.assertEqual(data["'ETHT55'!K4"], "05-20 22:31:05")
+        self.assertEqual(data["'ETHT55'!K6"], 9)
+        self.assertEqual(data["'ETHT55'!K8"], 14.72)
+        self.assertEqual(data["'ETHT55'!K10"], 617)
+        self.assertEqual(data["'ETHT55'!K12"], 2)
+        self.assertEqual(data["'ETHT55'!K14"], 0)
+        self.assertEqual(data["'ETHT55'!K16"], 1)
 
 
 if __name__ == "__main__":

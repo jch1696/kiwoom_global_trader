@@ -17,6 +17,7 @@ from pathlib import Path
 from .config import GoogleConfig, NotifyConfig, load_config
 from .env_loader import load_env
 from .notifier import TelegramNotifier
+from .runtime_state import StateStore
 from .sheet_reader import PublicCsvSheetReader, PublicXlsxSheetReader, _read_url_text
 from .updater import maybe_auto_update
 from .build_info import APP_VERSION, BUILD_COMMIT
@@ -100,7 +101,7 @@ def ensure_config_file(config_path: str | Path) -> Path:
                     },
                     "settlement": {
                         "enabled": True,
-                        "run_time_kst": "07:10",
+                        "run_time_kst": "06:10",
                         "session_mode": "regular_only",
                         "once_per_day": True,
                         "state_file": "data/state.json",
@@ -868,6 +869,88 @@ def latest_order_telegram_sent(
     return str(rows[-1].get("telegram_sent", "")).strip().lower() == "true"
 
 
+def append_console_log_line(project_dir: str | Path, line: str, now: datetime | None = None) -> None:
+    timestamp = (now or datetime.now()).isoformat(timespec="seconds")
+    logs_dir = Path(project_dir) / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    path = logs_dir / f"console_{timestamp[:10].replace('-', '')}.log"
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(f"{timestamp}\t{line}\n")
+
+
+def read_execution_log_rows(project_dir: str | Path, kind: str = "all", limit: int = 200) -> list[tuple[str, str, str, str, str]]:
+    logs_dir = Path(project_dir) / "logs"
+    if not logs_dir.exists():
+        return []
+
+    wanted = {
+        "all": ("console", "orders", "errors", "settlement"),
+        "console": ("console",),
+        "orders": ("orders",),
+        "errors": ("errors",),
+        "settlement": ("settlement",),
+    }.get(kind, ("console", "orders", "errors", "settlement"))
+    rows: list[tuple[str, str, str, str, str]] = []
+
+    if "console" in wanted:
+        for path in sorted(logs_dir.glob("console_*.log"), key=lambda item: item.stat().st_mtime, reverse=True)[:5]:
+            try:
+                for raw_line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                    timestamp, _, message = raw_line.partition("\t")
+                    rows.append((timestamp, "console", "", "", message or timestamp))
+            except OSError:
+                continue
+
+    for prefix in ("orders", "errors", "settlement"):
+        if prefix not in wanted:
+            continue
+        for path in sorted(logs_dir.glob(f"{prefix}_*.csv"), key=lambda item: item.stat().st_mtime, reverse=True)[:5]:
+            try:
+                with path.open("r", encoding="utf-8-sig", newline="") as handle:
+                    for row in csv.DictReader(handle):
+                        rows.append(_execution_row_from_csv(prefix, row))
+            except OSError:
+                continue
+
+    rows.sort(key=lambda row: row[0])
+    return rows[-limit:]
+
+
+def _execution_row_from_csv(prefix: str, row: dict[str, str]) -> tuple[str, str, str, str, str]:
+    timestamp = str(row.get("timestamp") or row.get("updated_at_kst") or "")
+    if prefix == "orders":
+        sheet = str(row.get("sheet_name", ""))
+        result = str(row.get("result", ""))
+        message = " | ".join(
+            part
+            for part in [
+                str(row.get("action", "")),
+                str(row.get("side", "")),
+                f"{row.get('price', '')} x {row.get('qty', '')}".strip(),
+                str(row.get("message", "")),
+            ]
+            if part.strip()
+        )
+        return (timestamp, "orders", sheet, result, message)
+    if prefix == "errors":
+        sheet = str(row.get("symbol") or row.get("account_no") or "")
+        result = str(row.get("error_type") or row.get("error", "ERROR"))
+        return (timestamp, "errors", sheet, result, str(row.get("error_message") or row.get("error") or ""))
+    sheet = str(row.get("sheet_name", ""))
+    result = "sent" if str(row.get("telegram_sent", "")).lower() == "true" else ""
+    message = " | ".join(
+        part
+        for part in [
+            str(row.get("trade_date_et", "")),
+            str(row.get("symbol", "")),
+            f"tier={row.get('final_tier', '')}",
+            f"qty={row.get('final_qty', '')}",
+        ]
+        if part.strip() and not part.endswith("=")
+    )
+    return (timestamp, "settlement", sheet, result, message)
+
+
 def live_order_fallback_telegram_text(sheet_name: str, message: str) -> str:
     return f"{sheet_name}\n{message}\nstatus: ORDER OK"
 
@@ -943,6 +1026,7 @@ def _run_tk_app(config_path: str) -> int:
             self.hts_auto_ready_at: datetime | None = None
             self.saved_auto_enabled_sheets: set[str] | None = None
             self.auto_start_pending = False
+            self.auto_settlement_pending = False
             self.notify_config = NotifyConfig()
             self.notifier = TelegramNotifier(self.notify_config)
 
@@ -952,6 +1036,7 @@ def _run_tk_app(config_path: str) -> int:
             self.status_var = tk.StringVar(value="대기")
             self.mode_var = tk.StringVar(value="실행 모드: dry-run")
             self.telegram_var = tk.StringVar(value="텔레그램: 미확인")
+            self.execution_log_kind_var = tk.StringVar(value="all")
             self.schedule_start_var = tk.StringVar(value="00:00")
             self.schedule_end_var = tk.StringVar(value="23:59")
             self.schedule_interval_var = tk.StringVar(value="120")
@@ -1122,11 +1207,41 @@ def _run_tk_app(config_path: str) -> int:
             ttk.Label(log_tab, text="정산을 Google 시트에 쓰려면 서비스 계정 이메일을 주문시트 공유 화면에서 편집자로 추가하세요.").pack(anchor=tk.W, pady=(8, 0))
             ttk.Label(log_tab, text="상세 로그는 logs 폴더에 저장됩니다. 화면 로그는 최근 500줄만 유지합니다.").pack(anchor=tk.W, pady=8)
 
+            history_tab = ttk.Frame(notebook, padding=8)
+            notebook.add(history_tab, text="실행 기록")
+            history_toolbar = ttk.Frame(history_tab)
+            history_toolbar.pack(fill=tk.X)
+            ttk.Label(history_toolbar, text="종류").pack(side=tk.LEFT, padx=(0, 4))
+            self.execution_log_kind_combo = ttk.Combobox(
+                history_toolbar,
+                textvariable=self.execution_log_kind_var,
+                values=("all", "console", "orders", "errors", "settlement"),
+                width=12,
+                state="readonly",
+            )
+            self.execution_log_kind_combo.pack(side=tk.LEFT, padx=2)
+            self.execution_log_kind_combo.bind("<<ComboboxSelected>>", lambda _event: self.refresh_execution_logs())
+            ttk.Button(history_toolbar, text="새로고침", command=self.refresh_execution_logs).pack(side=tk.LEFT, padx=6)
+            ttk.Button(history_toolbar, text="logs 폴더 열기", command=self.open_logs_folder).pack(side=tk.LEFT, padx=2)
+            history_columns = ("time", "type", "sheet", "result", "message")
+            self.execution_log_table = ttk.Treeview(history_tab, columns=history_columns, show="headings", height=13)
+            for key, label, width in [
+                ("time", "시간", 145),
+                ("type", "기록", 85),
+                ("sheet", "시트/종목", 95),
+                ("result", "결과", 110),
+                ("message", "내용", 680),
+            ]:
+                self.execution_log_table.heading(key, text=label)
+                self.execution_log_table.column(key, width=width, anchor=tk.W)
+            self.execution_log_table.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+
             log_frame = ttk.Frame(self.root, padding=(8, 0, 8, 8))
             log_frame.pack(fill=tk.BOTH, expand=True)
             ttk.Label(log_frame, text="로그").pack(anchor=tk.W)
             self.log_text = tk.Text(log_frame, height=9, wrap=tk.NONE)
             self.log_text.pack(fill=tk.BOTH, expand=True)
+            self.refresh_execution_logs()
 
         def browse_config(self) -> None:
             filename = filedialog.askopenfilename(
@@ -1170,6 +1285,30 @@ def _run_tk_app(config_path: str) -> int:
                 f"{email}",
             )
             self.refresh_credential_status()
+
+        def open_logs_folder(self) -> None:
+            logs_dir = project_dir / "logs"
+            logs_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                if sys.platform == "win32":
+                    subprocess.Popen(["explorer", str(logs_dir)])
+                else:
+                    subprocess.Popen([str(logs_dir)])
+            except Exception as exc:
+                self.append_log(f"[console] logs 폴더 열기 실패: {exc}")
+
+        def refresh_execution_logs(self) -> None:
+            if not hasattr(self, "execution_log_table"):
+                return
+            kind = self.execution_log_kind_var.get() or "all"
+            for item in self.execution_log_table.get_children():
+                self.execution_log_table.delete(item)
+            rows = read_execution_log_rows(project_dir, kind=kind, limit=300)
+            for row in rows:
+                self.execution_log_table.insert("", tk.END, values=row)
+            if rows:
+                children = self.execution_log_table.get_children()
+                self.execution_log_table.see(children[-1])
 
         def connect_google_sheet(self) -> None:
             sheet_url = self.sheet_url_var.get().strip()
@@ -1583,6 +1722,8 @@ def _run_tk_app(config_path: str) -> int:
             except Exception as exc:
                 self.append_log(f"[console] HTS 자동 실행 오류: {exc}")
                 self.send_console_telegram(f"[HTS 자동 실행 오류]\n{exc}", failure=True)
+            if not self.running and not self.auto_fill_waiting:
+                self.maybe_run_auto_settlement()
             if not self.scheduler_active or self.running or self.auto_fill_waiting:
                 return
             if not self.hts_ready_for_auto_scheduler():
@@ -1646,6 +1787,49 @@ def _run_tk_app(config_path: str) -> int:
                 return
             if should_run_daily_time(now, launch_time, self.hts_launch_done_date, max_late_sec=24 * 60 * 60 - 1):
                 self.launch_hts_now()
+
+        def maybe_run_auto_settlement(self) -> None:
+            if self.auto_settlement_pending:
+                return
+            config_path = self.config_var.get().strip() or "config.live.json"
+            config_file = Path(config_path)
+            if not config_file.is_absolute():
+                config_file = project_dir / config_file
+            try:
+                config = load_config(config_file)
+            except Exception as exc:
+                self.append_log(f"[console] 자동 정산 설정 읽기 실패: {exc}")
+                return
+            if not config.settlement.enabled:
+                return
+            try:
+                settlement_time = parse_hhmm(config.settlement.run_time_kst)
+            except ValueError:
+                self.append_log("[console] 자동 정산 시간 설정 오류")
+                return
+            state_store = StateStore(config_file.resolve().parent / config.settlement.state_file)
+            state = state_store.load()
+            last_run_date = state.last_settlement_date if config.settlement.once_per_day else None
+            if not should_run_daily_time(datetime.now(), settlement_time, last_run_date, max_late_sec=24 * 60 * 60 - 1):
+                return
+            self.auto_settlement_pending = True
+            self.append_log(f"[console] 자동 정산 실행 예정 run_time={settlement_time.strftime('%H:%M')}")
+            if not self.run_action("settle"):
+                self.auto_settlement_pending = False
+
+        def mark_auto_settlement_done(self) -> None:
+            config_path = self.config_var.get().strip() or "config.live.json"
+            config_file = Path(config_path)
+            if not config_file.is_absolute():
+                config_file = project_dir / config_file
+            try:
+                config = load_config(config_file)
+                state_store = StateStore(config_file.resolve().parent / config.settlement.state_file)
+                state = state_store.load()
+                state.last_settlement_date = datetime.now().strftime("%Y-%m-%d")
+                state_store.save(state)
+            except Exception as exc:
+                self.append_log(f"[console] 자동 정산 상태 저장 실패: {exc}")
 
         def _worker(self, command: list[str], action: str, sheet_name: str | None) -> None:
             target = f" / {sheet_name}" if sheet_name else ""
@@ -1720,6 +1904,11 @@ def _run_tk_app(config_path: str) -> int:
                 self.mark_sheet(sheet_name, "OK" if ok else "ERROR", action)
             if action == "telegram":
                 self.telegram_var.set("텔레그램: 정상" if ok else "텔레그램: 실패")
+            if action == "settle":
+                self.auto_settlement_pending = False
+                if ok:
+                    self.mark_auto_settlement_done()
+                    self.append_log("[console] 자동 정산 상태 저장 완료")
             if action == "live_order":
                 self.mode_var.set("실행 모드: 실주문 실행 완료" if ok else "실행 모드: 실주문 실패")
             elif action != "live_order":
@@ -1902,6 +2091,10 @@ def _run_tk_app(config_path: str) -> int:
                 state.fill_order_at = None
 
         def append_log(self, line: str, *, display: bool = True) -> None:
+            try:
+                append_console_log_line(project_dir, line)
+            except Exception:
+                pass
             live_order = parse_live_order_result_line(line)
             if live_order is not None and self.current_action == "live_order":
                 status, message = live_order
@@ -1926,6 +2119,8 @@ def _run_tk_app(config_path: str) -> int:
             else:
                 self.log_text.insert(tk.END, line + "\n")
             self.log_text.see(tk.END)
+            if hasattr(self, "execution_log_table"):
+                self.refresh_execution_logs()
 
         def run(self) -> int:
             self.root.mainloop()

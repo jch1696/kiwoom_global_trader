@@ -41,7 +41,7 @@ class TradingConfig:
 @dataclass(frozen=True)
 class SettlementConfig:
     enabled: bool = True
-    run_time_kst: str = "07:10"
+    run_time_kst: str = "06:10"
     session_mode: str = "regular_only"
     once_per_day: bool = True
     state_file: str = "data/state.json"

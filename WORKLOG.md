@@ -30,3 +30,28 @@
 
 - The working tree still contains local, uncommitted source changes and local build folders.
 - Temporary build folders include `build_local/`, `dist_local/`, `build_rebalance_test/`, and `dist_rebalance_test/`.
+
+## 2026-05-21
+
+### Program info sheet update and daily settlement automation
+
+- Fixed Google Sheet program info cell mapping.
+  - The sheet layout stores program info values at `K4`, `K6`, `K8`, `K10`, `K12`, `K14`, and `K16`.
+  - The app was writing to `K6`, `K8`, `K10`, `K12`, `K14`, `K16`, and `K18`, so values were shifted down and the visible program info area was not updated correctly.
+- Added automatic daily settlement/sheet write from the console tick.
+  - The console now checks `settlement.run_time_kst` and runs `settle` once per KST date after that time.
+  - Successful runs update `data/state.json:last_settlement_date` so the same day is not written repeatedly.
+- Changed default settlement time from `07:10` to `06:10` KST to run after the configured trading window ends.
+- Verification:
+  - `python -m pytest` passed with `137 passed, 1 skipped`.
+  - Checked the live Google Sheet: program area formulas in `V5:AB6` are present on `LABU55`, `SOXL55`, `BITU55`, and `ETHT55`.
+
+### Console execution history
+
+- Added persistent console screen logging to `logs/console_YYYYMMDD.log`.
+- Added a new console tab, `실행 기록`, that shows recent execution records from:
+  - console screen logs
+  - order CSV logs
+  - error CSV logs
+  - settlement CSV logs
+- Added filters for `all`, `console`, `orders`, `errors`, and `settlement`, plus a button to open the `logs` folder directly.

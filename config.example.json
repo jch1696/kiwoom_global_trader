@@ -28,7 +28,7 @@
   },
   "settlement": {
     "enabled": true,
-    "run_time_kst": "07:10",
+    "run_time_kst": "06:10",
     "session_mode": "regular_only",
     "once_per_day": true,
     "state_file": "data/state.json"

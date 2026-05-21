@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from src.console import (
     SheetValidationState,
+    append_console_log_line,
     action_updates_sheet_rows,
     build_cli_command,
     build_public_csv_url,
@@ -34,6 +35,7 @@ from src.console import (
     parse_google_sheet_tab_names_from_html,
     parse_strategy_result_line,
     read_console_settings,
+    read_execution_log_rows,
     remaining_time_text,
     resolve_credential_path,
     save_public_csv_tabs_to_config,
@@ -500,6 +502,37 @@ class ConsoleTest(unittest.TestCase):
         self.assertEqual(len(summaries), 1)
         self.assertIn("LABU55", summaries[0])
         self.assertIn("form populated without clicking order button", summaries[0])
+
+    def test_read_execution_log_rows_combines_console_and_csv_logs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            logs = Path(tmp) / "logs"
+            logs.mkdir()
+            append_console_log_line(tmp, "[console] 자동 운영 시작", datetime(2026, 5, 21, 21, 30, 0))
+            (logs / "orders_20260521.csv").write_text(
+                "\n".join(
+                    [
+                        "timestamp,sheet_name,account_no,symbol,current_qty,current_tier,action,side,price,qty,order_id,result,message,telegram_sent",
+                        "2026-05-21T21:31:00,BITU55,61520174,BITU,,7,place,buy,13.74,87,,failed,order rejected,True",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (logs / "errors_20260521.csv").write_text(
+                "\n".join(
+                    [
+                        "timestamp,module,account_no,symbol,error_type,error_message,traceback,retry_count,strategy_disabled,telegram_sent",
+                        "2026-05-21T21:32:00,program_info_sheet,61520174,BITU,program_info_update_failed,permission denied,,1,False,False",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            rows = read_execution_log_rows(tmp, kind="all")
+
+        self.assertEqual([row[1] for row in rows], ["console", "orders", "errors"])
+        self.assertIn("자동 운영 시작", rows[0][4])
+        self.assertEqual(rows[1][2], "BITU55")
+        self.assertEqual(rows[2][3], "program_info_update_failed")
 
     def test_latest_order_summaries_sorts_across_log_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

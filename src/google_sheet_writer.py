@@ -104,13 +104,13 @@ class GoogleProgramInfoWriter:
     def update_program_info(self, sheet_name: str, update: ProgramInfoUpdate) -> None:
         service = self._get_service()
         cells = {
-            "K6": update.updated_at.strftime("%m-%d %H:%M:%S"),
-            "K8": update.current_tier,
-            "K10": round(update.current_price, 4),
-            "K12": update.balance_qty,
-            "K14": update.qty_gap,
-            "K16": update.buy_open_count,
-            "K18": update.sell_open_count,
+            "K4": update.updated_at.strftime("%m-%d %H:%M:%S"),
+            "K6": update.current_tier,
+            "K8": round(update.current_price, 4),
+            "K10": update.balance_qty,
+            "K12": update.qty_gap,
+            "K14": update.buy_open_count,
+            "K16": update.sell_open_count,
         }
         service.spreadsheets().values().batchUpdate(
             spreadsheetId=self.spreadsheet_id,
