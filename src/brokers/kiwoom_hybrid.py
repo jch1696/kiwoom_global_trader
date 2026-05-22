@@ -307,12 +307,6 @@ class KiwoomHybridBroker(BrokerAdapter):
                 verification.get("order_id") or None,
                 f"clicked {button_label} button via {click_method_text}, confirmed popup, and detected order in open orders",
             )
-        if verification["created"] == "unknown":
-            return OrderResult(
-                True,
-                None,
-                f"clicked {button_label} button via {click_method_text} and confirmed popup; {verification['message']}",
-            )
         return OrderResult(
             False,
             None,
@@ -2576,7 +2570,7 @@ class KiwoomHybridBroker(BrokerAdapter):
             time.sleep(self.POST_PLACE_RETRY_DELAY_SEC)
         if not read_succeeded:
             return {"created": "false", "message": last_message}
-        return {"created": "unknown", "message": last_message}
+        return {"created": "false", "message": last_message}
 
     @staticmethod
     def _matches_created_order(order: OrderRequest, open_order: OpenOrder) -> bool:

@@ -231,7 +231,7 @@ class KiwoomHybridBrokerParseTest(unittest.TestCase):
         self.assertEqual(result["removed"], "true")
         self.assertIn("no longer matches", result["message"])
 
-    def test_verify_order_created_treats_missing_open_order_as_unknown(self) -> None:
+    def test_verify_order_created_fails_when_open_order_missing(self) -> None:
         broker = KiwoomHybridBroker()
         order = OrderRequest(
             account_no="12345678",
@@ -248,8 +248,8 @@ class KiwoomHybridBrokerParseTest(unittest.TestCase):
         ):
             result = broker._verify_order_created(order)
 
-        self.assertEqual(result["created"], "unknown")
-        self.assertIn("filled immediately", result["message"])
+        self.assertEqual(result["created"], "false")
+        self.assertIn("matching open order", result["message"])
 
     def test_verify_order_created_fails_when_open_order_read_never_succeeds(self) -> None:
         broker = KiwoomHybridBroker()
@@ -271,7 +271,7 @@ class KiwoomHybridBrokerParseTest(unittest.TestCase):
         self.assertEqual(result["created"], "false")
         self.assertIn("HTS main window is not open", result["message"])
 
-    def test_place_order_succeeds_when_confirmed_but_open_order_missing(self) -> None:
+    def test_place_order_fails_when_confirmed_but_open_order_missing(self) -> None:
         broker = KiwoomHybridBroker()
         order = OrderRequest(
             account_no="12345678",
@@ -311,14 +311,14 @@ class KiwoomHybridBrokerParseTest(unittest.TestCase):
             patch.object(
                 broker,
                 "_verify_order_created",
-                return_value={"created": "unknown", "message": "matching open order was not detected; order may have filled immediately"},
+                return_value={"created": "false", "message": "matching open order was not detected"},
             ),
             patch.object(broker, "close_window_by_re", return_value=None),
         ):
             result = broker.place_order(order)
 
-        self.assertTrue(result.success)
-        self.assertIn("filled immediately", result.message)
+        self.assertFalse(result.success)
+        self.assertIn("order was not accepted", result.message)
 
     def test_find_auto_qty_checkbox_by_balance_auto_text(self) -> None:
         broker = KiwoomHybridBroker()
