@@ -24,6 +24,7 @@ from src.console import (
     line_indicates_hts_missing,
     live_unlock_status,
     load_sheet_tabs,
+    most_recent_window_end,
     next_window_start,
     extract_decision_action,
     extract_decision_has_cancel,
@@ -48,6 +49,7 @@ from src.console import (
     should_run_daily_time,
     should_auto_fill_after_dry_run,
     should_auto_live_after_fill_order,
+    should_run_after_window_end,
     write_console_settings,
 )
 from datetime import datetime, timedelta
@@ -306,6 +308,18 @@ class ConsoleTest(unittest.TestCase):
         next_start = next_window_start(now, parse_hhmm("22:30"), parse_hhmm("05:55"))
 
         self.assertEqual(next_start, datetime(2026, 5, 11, 22, 30, 0))
+
+    def test_should_run_after_window_end_runs_only_near_close(self) -> None:
+        start = parse_hhmm("22:30")
+        end = parse_hhmm("06:10")
+
+        self.assertTrue(should_run_after_window_end(datetime(2026, 5, 22, 6, 10, 5), start, end, None))
+        self.assertFalse(should_run_after_window_end(datetime(2026, 5, 22, 23, 11, 0), start, end, None))
+        self.assertFalse(should_run_after_window_end(datetime(2026, 5, 22, 6, 10, 5), start, end, "2026-05-22"))
+        self.assertEqual(
+            most_recent_window_end(datetime(2026, 5, 22, 6, 10, 5), start, end),
+            datetime(2026, 5, 22, 6, 10, 0),
+        )
 
     def test_remaining_time_text(self) -> None:
         now = datetime(2026, 5, 10, 10, 0, 0)

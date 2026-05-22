@@ -587,6 +587,31 @@ def next_window_start(now: datetime, start: time, end: time) -> datetime:
     return today_start + timedelta(days=1)
 
 
+def most_recent_window_end(now: datetime, start: time, end: time) -> datetime:
+    today_end = datetime.combine(now.date(), end)
+    if start <= end:
+        if now.time() >= end:
+            return today_end
+        return today_end - timedelta(days=1)
+    if now.time() < start:
+        return today_end
+    return today_end + timedelta(days=1)
+
+
+def should_run_after_window_end(
+    now: datetime,
+    start: time,
+    end: time,
+    last_run_date: str | None,
+    max_late_sec: int = 900,
+) -> bool:
+    ended_at = most_recent_window_end(now, start, end)
+    run_date = ended_at.strftime("%Y-%m-%d")
+    if last_run_date == run_date:
+        return False
+    return ended_at <= now <= ended_at + timedelta(seconds=max_late_sec)
+
+
 def next_run_text(value: datetime | None) -> str:
     return value.strftime("%H:%M:%S") if value else "-"
 
@@ -1027,6 +1052,7 @@ def _run_tk_app(config_path: str) -> int:
             self.saved_auto_enabled_sheets: set[str] | None = None
             self.auto_start_pending = False
             self.auto_settlement_pending = False
+            self.auto_settlement_config_error: str | None = None
             self.notify_config = NotifyConfig()
             self.notifier = TelegramNotifier(self.notify_config)
 
@@ -1789,40 +1815,43 @@ def _run_tk_app(config_path: str) -> int:
                 self.launch_hts_now()
 
         def maybe_run_auto_settlement(self) -> None:
+            if not self.scheduler_active:
+                return
             if self.auto_settlement_pending:
                 return
             config_path = self.config_var.get().strip() or "config.live.json"
-            config_file = Path(config_path)
-            if not config_file.is_absolute():
-                config_file = project_dir / config_file
             try:
+                config_file = ensure_config_file(config_path)
                 config = load_config(config_file)
             except Exception as exc:
-                self.append_log(f"[console] 자동 정산 설정 읽기 실패: {exc}")
+                message = str(exc)
+                if self.auto_settlement_config_error != message:
+                    self.auto_settlement_config_error = message
+                    self.append_log(f"[console] 자동 정산 설정 읽기 실패: {message}")
                 return
+            self.auto_settlement_config_error = None
             if not config.settlement.enabled:
                 return
             try:
-                settlement_time = parse_hhmm(config.settlement.run_time_kst)
+                start = parse_hhmm(self.schedule_start_var.get())
+                end = parse_hhmm(self.schedule_end_var.get())
             except ValueError:
-                self.append_log("[console] 자동 정산 시간 설정 오류")
+                self.append_log("[console] 자동 정산 기준 시간 설정 오류")
                 return
             state_store = StateStore(config_file.resolve().parent / config.settlement.state_file)
             state = state_store.load()
             last_run_date = state.last_settlement_date if config.settlement.once_per_day else None
-            if not should_run_daily_time(datetime.now(), settlement_time, last_run_date, max_late_sec=24 * 60 * 60 - 1):
+            if not should_run_after_window_end(datetime.now(), start, end, last_run_date):
                 return
             self.auto_settlement_pending = True
-            self.append_log(f"[console] 자동 정산 실행 예정 run_time={settlement_time.strftime('%H:%M')}")
+            self.append_log(f"[console] 자동 정산 실행 예정 window_end={end.strftime('%H:%M')}")
             if not self.run_action("settle"):
                 self.auto_settlement_pending = False
 
         def mark_auto_settlement_done(self) -> None:
             config_path = self.config_var.get().strip() or "config.live.json"
-            config_file = Path(config_path)
-            if not config_file.is_absolute():
-                config_file = project_dir / config_file
             try:
+                config_file = ensure_config_file(config_path)
                 config = load_config(config_file)
                 state_store = StateStore(config_file.resolve().parent / config.settlement.state_file)
                 state = state_store.load()

@@ -63,6 +63,9 @@ if (-not (Test-Path $CliPath)) {
 
 Copy-Item -LiteralPath (Join-Path $RepoRoot "README.md") -Destination (Join-Path $RepoRoot "dist\KiwoomGlobalTraderConsole\README.md") -Force
 Copy-Item -LiteralPath (Join-Path $RepoRoot "config.example.json") -Destination (Join-Path $RepoRoot "dist\KiwoomGlobalTraderConsole\config.example.json") -Force
+if (Test-Path (Join-Path $RepoRoot "config.live.json")) {
+    Copy-Item -LiteralPath (Join-Path $RepoRoot "config.live.json") -Destination (Join-Path $RepoRoot "dist\KiwoomGlobalTraderConsole\config.live.json") -Force
+}
 Copy-Item -LiteralPath (Join-Path $RepoRoot "requirements.txt") -Destination (Join-Path $RepoRoot "dist\KiwoomGlobalTraderConsole\requirements.txt") -Force
 
 $ZipPath = Join-Path $RepoRoot "dist\KiwoomGlobalTraderConsole.zip"
