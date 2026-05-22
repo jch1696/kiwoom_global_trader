@@ -85,7 +85,7 @@ class KiwoomHybridBroker(BrokerAdapter):
     POPUP_RETRY_DELAY_SEC = 0.3
     POST_CANCEL_RETRY_COUNT = 5
     POST_CANCEL_RETRY_DELAY_SEC = 0.5
-    POST_PLACE_RETRY_COUNT = 5
+    POST_PLACE_RETRY_COUNT = 10
     POST_PLACE_RETRY_DELAY_SEC = 0.5
     CB_GETCOUNT = 0x0146
     CB_GETLBTEXT = 0x0148
@@ -2267,7 +2267,8 @@ class KiwoomHybridBroker(BrokerAdapter):
         if info_hwnd is None:
             return None
         message = self._window_text_summary_by_handle(info_hwnd)
-        if not any(marker in message for marker in self.ORDER_UNAVAILABLE_MARKERS):
+        title = self._safe_handle_text(info_hwnd)
+        if "\uC548\uB0B4" not in title and not any(marker in message for marker in self.ORDER_UNAVAILABLE_MARKERS):
             return None
         if self._click_child_button_by_text(info_hwnd, self.CONFIRM_BUTTON_TEXT) or self._post_ok_to_window(info_hwnd):
             return message or "order rejected by HTS info popup"

@@ -271,6 +271,21 @@ class KiwoomHybridBrokerParseTest(unittest.TestCase):
         self.assertEqual(result["created"], "false")
         self.assertIn("HTS main window is not open", result["message"])
 
+    def test_handle_order_rejected_popup_treats_any_info_popup_as_failure(self) -> None:
+        broker = KiwoomHybridBroker()
+
+        with (
+            patch.object(broker, "_handle_foreground_info_popup", return_value=None),
+            patch.object(broker, "_find_info_popup_handle", return_value=1234),
+            patch.object(broker, "_window_text_summary_by_handle", return_value="예수금이 부족합니다"),
+            patch.object(broker, "_safe_handle_text", return_value="안내"),
+            patch.object(broker, "_click_child_button_by_text", return_value=True),
+            patch.object(broker, "_post_ok_to_window", return_value=False),
+        ):
+            result = broker._handle_order_rejected_popup()
+
+        self.assertEqual(result, "예수금이 부족합니다")
+
     def test_place_order_fails_when_confirmed_but_open_order_missing(self) -> None:
         broker = KiwoomHybridBroker()
         order = OrderRequest(
